@@ -36,7 +36,6 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   double _sensexLtp = 81971.99;
   double _sensexChange = -560.20;
   double _sensexChangePct = -0.68;
-  bool _isSyncingScrips = false;
 
   @override
   void initState() {
@@ -53,35 +52,6 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
         debugPrint('Morning auto-refresh: $msg');
       },
     );
-  }
-
-  Future<void> _handleRefreshScripMaster() async {
-    setState(() => _isSyncingScrips = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Downloading Kotak Scrip Master…'),
-        duration: Duration(seconds: 2),
-      ),
-    );
-
-    final result = await ScripMasterService.instance.syncScripMaster(
-      force: true,
-      onProgress: (msg) {
-        debugPrint('Scrip master sync: $msg');
-      },
-    );
-
-    if (mounted) {
-      setState(() => _isSyncingScrips = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(result.message),
-          backgroundColor:
-              result.success ? Colors.green.shade800 : Colors.red.shade800,
-          duration: const Duration(seconds: 4),
-        ),
-      );
-    }
   }
 
   @override
@@ -125,9 +95,27 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
     if (_watchlists.isEmpty) return;
     final activeList = _watchlists[_activeWatchlistIndex];
     final items = await _db.getItems(activeList.id!);
+
+    // Requirement 5: Resolve tokens for legacy rows if token is null
+    final resolvedItems = <WatchItem>[];
+    for (final item in items) {
+      if (item.token == null || item.token!.trim().isEmpty) {
+        final lookedUp =
+            await _db.findTokenBySymbolAndSegment(item.symbol, item.exchange);
+        if (lookedUp != null && lookedUp.trim().isNotEmpty) {
+          if (item.id != null) {
+            await _db.updateItemToken(item.id!, lookedUp);
+          }
+          resolvedItems.add(item.copyWith(token: lookedUp));
+          continue;
+        }
+      }
+      resolvedItems.add(item);
+    }
+
     if (mounted) {
       setState(() {
-        _activeItems = items;
+        _activeItems = resolvedItems;
         _isLoading = false;
       });
       _fetchLiveQuotes();
@@ -135,25 +123,26 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   }
 
   Future<void> _fetchLiveQuotes() async {
-    if (!_api.isLoggedIn) {
-      return;
+    // Need at least access token to fetch quotes
+    if (_api.accessToken == null || _api.accessToken!.isEmpty) {
+      if (!_api.isLoggedIn) return;
     }
 
-    // 1. Fetch live quotes for active items
-    for (final item in _activeItems) {
+    // 1. Fetch live quotes for active items in ONE call (up to 50 instruments per batch)
+    final validItems = _activeItems
+        .where((it) => it.token != null && it.token!.trim().isNotEmpty)
+        .toList();
+
+    if (validItems.isNotEmpty) {
       try {
-        final quote = await _api.getQuote(
-          item.symbol,
-          item.exchange,
-          token: item.token,
-        );
+        final batchQuotes = await _api.getQuotesBatch(validItems);
         if (mounted) {
           setState(() {
-            _quotes['${item.exchange}|${item.symbol}'] = quote;
+            _quotes.addAll(batchQuotes);
           });
         }
       } catch (e) {
-        debugPrint('Realtime quote error for ${item.symbol}: $e');
+        debugPrint('Realtime batch quote error: $e');
       }
     }
 
@@ -386,36 +375,6 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
     }
   }
 
-  Future<void> _showLogoutConfirmDialog() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2228),
-        title: const Text('Logout', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Are you sure you want to logout from Kotak Neo?',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Logout'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && mounted) {
-      await _api.deleteSavedSession();
-      widget.onLogout?.call();
-    }
-  }
-
   Future<void> _deleteItem(WatchItem item) async {
     if (item.id != null) {
       await _db.removeItem(item.id!);
@@ -535,12 +494,12 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                         Navigator.pop(ctx);
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Paper BUY ${item.symbol} registered'),
+                            content: Text('BUY ${item.symbol} registered'),
                             backgroundColor: const Color(0xFF387ED1),
                           ),
                         );
                       },
-                      child: const Text('BUY (PAPER)'),
+                      child: const Text('BUY'),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -554,12 +513,12 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                         Navigator.pop(ctx);
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Paper SELL ${item.symbol} registered'),
+                            content: Text('SELL ${item.symbol} registered'),
                             backgroundColor: const Color(0xFFE53935),
                           ),
                         );
                       },
-                      child: const Text('SELL (PAPER)'),
+                      child: const Text('SELL'),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -697,67 +656,11 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                     ),
                   ),
 
-                  // Down Chevron & PAPER badge
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.amber.shade800,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: const Text(
-                          'PAPER',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                            letterSpacing: 0.8,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      const Icon(
-                        Icons.keyboard_arrow_down,
-                        color: Color(0xFF387ED1),
-                        size: 22,
-                      ),
-                      const SizedBox(width: 4),
-                      // Refresh Instruments (⟳) Button
-                      IconButton(
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                        icon: _isSyncingScrips
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF387ED1),
-                                ),
-                              )
-                            : const Icon(
-                                Icons.refresh,
-                                color: Color(0xFF387ED1),
-                                size: 20,
-                              ),
-                        tooltip: 'Refresh Instruments (Kotak Scrip Master)',
-                        onPressed: _isSyncingScrips ? null : _handleRefreshScripMaster,
-                      ),
-                      const SizedBox(width: 4),
-                      IconButton(
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                        icon: const Icon(
-                          Icons.logout,
-                          color: Colors.redAccent,
-                          size: 18,
-                        ),
-                        tooltip: 'Logout from Kotak Neo',
-                        onPressed: _showLogoutConfirmDialog,
-                      ),
-                    ],
+                  // Down Chevron
+                  const Icon(
+                    Icons.keyboard_arrow_down,
+                    color: Color(0xFF387ED1),
+                    size: 22,
                   ),
                 ],
               ),
@@ -985,8 +888,11 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                             ),
                             itemBuilder: (context, index) {
                               final item = _activeItems[index];
-                              final key = '${item.exchange}|${item.symbol}';
-                              final quote = _quotes[key];
+                              final hasToken =
+                                  item.token != null && item.token!.trim().isNotEmpty;
+                              final quote = (hasToken ? _quotes[item.token!] : null) ??
+                                  _quotes['${item.exchange}|${item.symbol}'] ??
+                                  _quotes['${item.exchange}|${item.token}'];
 
                               final ltpStr = quote != null
                                   ? quote.ltp.toStringAsFixed(2)
@@ -1040,7 +946,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                                         ],
                                       ),
 
-                                      // Right: LTP & Change or Delete in edit mode
+                                      // Right: LTP & Change, Missing Token Notice, or Delete in edit mode
                                       if (_isEditMode)
                                         IconButton(
                                           icon: const Icon(
@@ -1049,6 +955,18 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                                             size: 22,
                                           ),
                                           onPressed: () => _deleteItem(item),
+                                        )
+                                      else if (!hasToken)
+                                        const Flexible(
+                                          child: Text(
+                                            'Token missing — re-add this stock from search',
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Color(0xFFFFB300),
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                            textAlign: TextAlign.end,
+                                          ),
                                         )
                                       else
                                         Column(

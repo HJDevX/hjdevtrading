@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
+import 'package:hjdev_trading/db/app_db.dart';
 import 'package:hjdev_trading/models/quote.dart';
+import 'package:hjdev_trading/models/watchlist.dart';
 
 /// Exception thrown when a Kotak Neo API request fails
 class KotakApiException implements Exception {
@@ -37,6 +40,7 @@ class KotakApi {
   static const String _keySessionBaseUrl = 'kotak_session_base_url';
   static const String _keyGreetingName = 'kotak_greeting_name';
   static const String _keyLoginDate = 'kotak_login_date';
+  static const String _keyFeedUrl = 'kotak_feed_url';
 
   // Session expired notifier
   static final ValueNotifier<String?> sessionExpiredNotifier =
@@ -44,7 +48,18 @@ class KotakApi {
 
   // Static API constants
   static const String loginBaseUrl = 'https://mis.kotaksecurities.com/login/1.0';
+  static const String defaultTradeBaseUrl = 'https://gw.kotaksecurities.com/trade/1.0';
   static const String neoFinKey = 'neotradeapi';
+
+  /// Normalizes exchange names to official Kotak segments (nse_cm, bse_cm, nse_fo, mcx_fo)
+  static String normalizeSegment(String raw) {
+    final s = raw.toLowerCase().trim();
+    if (s == 'nse') return 'nse_cm';
+    if (s == 'bse') return 'bse_cm';
+    if (s == 'nfo') return 'nse_fo';
+    if (s == 'mcx') return 'mcx_fo';
+    return s;
+  }
 
   // In-memory session credentials
   String? _accessToken;
@@ -61,6 +76,7 @@ class KotakApi {
   String? _baseUrl;
   String? _greetingName;
   String? _loginDate;
+  String? _feedUrl;
 
   // Getters
   String? get accessToken => _accessToken;
@@ -73,6 +89,7 @@ class KotakApi {
   String? get baseUrl => _baseUrl;
   String? get greetingName => _greetingName;
   String? get loginDate => _loginDate;
+  String? get feedUrl => _feedUrl;
 
   /// Returns today's date in IST (Indian Standard Time, UTC+5:30) as yyyy-mm-dd
   static String getTodayIstDate() {
@@ -181,6 +198,7 @@ class KotakApi {
       _sessionToken = data['token']?.toString();
       _sessionSid = data['sid']?.toString();
       _baseUrl = data['baseUrl']?.toString();
+      _feedUrl = data['feedUrl']?.toString();
       _greetingName = data['greetingName']?.toString() ??
           data['name']?.toString() ??
           data['clientName']?.toString() ??
@@ -194,6 +212,7 @@ class KotakApi {
           baseUrl: _baseUrl!,
           greetingName: _greetingName ?? '',
           loginDate: getTodayIstDate(),
+          feedUrl: _feedUrl,
         );
       }
 
@@ -223,39 +242,172 @@ class KotakApi {
   }
 
   // --- Live Quotes ---
-  /// GET `{baseUrl}/script-details/1.0/quotes/neosymbol/{exchange}|{symbol}`
-  /// Headers: `Authorization: <accessToken>`, `neo-fin-key: neotradeapi`, `Auth: <session token>`, `sid: <session sid>`
-  /// Parses ltp, open, high, low, previous close, volume.
-  Future<Quote> getQuote(String symbol, String exchange, {String? token}) async {
-    if (!isLoggedIn) {
-      throw KotakApiException('Not logged in. Please log in first.');
+  /// Fetches quotes for an entire watchlist in ONE call (up to 50 instruments per chunk)
+  /// GET {baseUrl}/script-details/1.0/quotes/neosymbol/{segment}|{token1},{segment}|{token2}/all
+  /// Per Kotak official docs:
+  /// - neosymbol must be instrument TOKEN (number), never symbol name
+  /// - "|" and "," must NOT be URL-encoded
+  /// - Authorization: `<accessToken>` is sufficient for quotes
+  Future<Map<String, Quote>> getQuotesBatch(List<WatchItem> items) async {
+    if (items.isEmpty) return {};
+
+    if (_accessToken == null || _accessToken!.isEmpty) {
+      await loadSavedProfile();
+    }
+    if (_accessToken == null || _accessToken!.isEmpty) {
+      debugPrint('KotakApi: Access token is empty, cannot fetch quotes');
+      return {};
     }
 
-    var base = _baseUrl!;
+    var base = _baseUrl ?? defaultTradeBaseUrl;
     if (base.endsWith('/')) {
       base = base.substring(0, base.length - 1);
     }
 
-    final rawSegment = '$exchange|$symbol';
-    final encodedSegment = Uri.encodeComponent(rawSegment);
-    final url =
-        Uri.parse('$base/script-details/1.0/quotes/neosymbol/$encodedSegment');
-
-    final headers = {
+    final headers = <String, String>{
       'Authorization': _accessToken ?? '',
       'neo-fin-key': neoFinKey,
-      'Auth': _sessionToken ?? '',
-      'sid': _sessionSid ?? '',
     };
+    if (_sessionToken != null && _sessionToken!.isNotEmpty) {
+      headers['Auth'] = _sessionToken!;
+    }
+    if (_sessionSid != null && _sessionSid!.isNotEmpty) {
+      headers['sid'] = _sessionSid!;
+    }
+
+    // Only query items with a valid token
+    final validItems = items.where((it) => it.token != null && it.token!.trim().isNotEmpty).toList();
+    if (validItems.isEmpty) return {};
+
+    final allQuotes = <String, Quote>{};
+
+    // Maximum 50 per call
+    for (var i = 0; i < validItems.length; i += 50) {
+      final chunk = validItems.sublist(i, math.min(i + 50, validItems.length));
+
+      // Join multiple instruments with commas — nse_cm|{token1},nse_cm|{token2}
+      // Do NOT URL-encode "|" or ","
+      final neosymbols = chunk.map((it) {
+        final seg = normalizeSegment(it.exchange);
+        return '$seg|${it.token!.trim()}';
+      }).join(',');
+
+      final url = Uri.parse('$base/script-details/1.0/quotes/neosymbol/$neosymbols/all');
+
+      final response = await _client.get(url, headers: headers);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        final err = _extractErrorMessage(response);
+        debugPrint('KotakApi getQuotesBatch error (${response.statusCode}): ${response.body}');
+
+        if (response.statusCode == 403 || err.toLowerCase().contains('session')) {
+          await deleteSavedSession();
+          sessionExpiredNotifier.value = 'Session expired — please login again';
+        }
+
+        throw KotakApiException(err, statusCode: response.statusCode);
+      }
+
+      try {
+        final decoded = jsonDecode(response.body);
+        List rawList = [];
+        if (decoded is List) {
+          rawList = decoded;
+        } else if (decoded is Map) {
+          final data = decoded['data'] ?? decoded['result'] ?? decoded['quotes'] ?? decoded['quote'];
+          if (data is List) {
+            rawList = data;
+          } else if (data is Map) {
+            rawList = [data];
+          } else {
+            rawList = [decoded];
+          }
+        }
+
+        for (final entry in rawList) {
+          if (entry is! Map) continue;
+          final map = Map<String, dynamic>.from(entry);
+          final exchangeToken = (map['exchange_token'] ?? map['token'] ?? '').toString().trim();
+
+          // Match each item to its watchlist row by "exchange_token"
+          WatchItem? matched;
+          for (final it in chunk) {
+            if (it.token?.trim() == exchangeToken) {
+              matched = it;
+              break;
+            }
+          }
+
+          final quote = Quote.fromMap(
+            map,
+            symbol: matched?.symbol ?? (map['symbol']?.toString() ?? exchangeToken),
+            exchange: matched?.exchange ?? (map['segment']?.toString() ?? ''),
+          );
+
+          if (exchangeToken.isNotEmpty) {
+            allQuotes[exchangeToken] = quote;
+          }
+          if (matched != null) {
+            allQuotes['${matched.exchange}|${matched.symbol}'] = quote;
+            allQuotes['${matched.exchange}|${matched.token}'] = quote;
+          }
+        }
+      } catch (e) {
+        debugPrint('KotakApi quotes batch parsing failed: $e. Raw response: ${response.body}');
+        rethrow;
+      }
+    }
+
+    return allQuotes;
+  }
+
+  /// Fetches a single quote using the official format:
+  /// GET {baseUrl}/script-details/1.0/quotes/neosymbol/{segment}|{token}/all
+  Future<Quote> getQuote(String symbol, String exchange, {String? token}) async {
+    if (_accessToken == null || _accessToken!.isEmpty) {
+      await loadSavedProfile();
+    }
+    if (_accessToken == null || _accessToken!.isEmpty) {
+      throw KotakApiException('Access token required for quotes');
+    }
+
+    var base = _baseUrl ?? defaultTradeBaseUrl;
+    if (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+
+    String? actualToken = token?.trim();
+    if (actualToken == null || actualToken.isEmpty) {
+      actualToken = await AppDb.instance.findTokenBySymbolAndSegment(symbol, exchange);
+    }
+
+    if (actualToken == null || actualToken.isEmpty) {
+      throw KotakApiException(
+        'Token missing for $symbol ($exchange) — cannot fetch quote without instrument token',
+      );
+    }
+
+    final seg = normalizeSegment(exchange);
+    final neosymbol = '$seg|$actualToken';
+    final url = Uri.parse('$base/script-details/1.0/quotes/neosymbol/$neosymbol/all');
+
+    final headers = <String, String>{
+      'Authorization': _accessToken ?? '',
+      'neo-fin-key': neoFinKey,
+    };
+    if (_sessionToken != null && _sessionToken!.isNotEmpty) {
+      headers['Auth'] = _sessionToken!;
+    }
+    if (_sessionSid != null && _sessionSid!.isNotEmpty) {
+      headers['sid'] = _sessionSid!;
+    }
 
     final response = await _client.get(url, headers: headers);
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final err = _extractErrorMessage(response);
-      debugPrint(
-          'KotakApi getQuote error (${response.statusCode}) for $rawSegment: ${response.body}');
+      debugPrint('KotakApi getQuote error (${response.statusCode}) for $neosymbol: ${response.body}');
 
-      // If HTTP 403 or message contains "session", treat saved session as dead
       if (response.statusCode == 403 || err.toLowerCase().contains('session')) {
         await deleteSavedSession();
         sessionExpiredNotifier.value = 'Session expired — please login again';
@@ -268,12 +420,9 @@ class KotakApi {
       final decoded = jsonDecode(response.body);
       Map<String, dynamic>? quoteMap;
 
-      // The response may be a top-level list or an object with a data field — handle both
       if (decoded is List && decoded.isNotEmpty) {
         final first = decoded.first;
-        if (first is Map<String, dynamic>) {
-          quoteMap = first;
-        } else if (first is Map) {
+        if (first is Map) {
           quoteMap = Map<String, dynamic>.from(first);
         }
       } else if (decoded is Map) {
@@ -297,14 +446,11 @@ class KotakApi {
       if (quoteMap != null && quoteMap.isNotEmpty) {
         return Quote.fromMap(quoteMap, symbol: symbol, exchange: exchange);
       } else {
-        debugPrint(
-            'KotakApi getQuote returned empty data for $rawSegment. Raw response: ${response.body}');
+        debugPrint('KotakApi getQuote returned empty data for $neosymbol. Raw response: ${response.body}');
         throw KotakApiException('Quote returned empty for $symbol ($exchange)');
       }
     } catch (e) {
-      // If parsing fails, print raw response in debug log so we can fix the parser from real response
-      debugPrint(
-          'KotakApi getQuote parsing failed for $rawSegment: $e. Raw response: ${response.body}');
+      debugPrint('KotakApi getQuote parsing failed for $neosymbol: $e. Raw response: ${response.body}');
       rethrow;
     }
   }
@@ -316,18 +462,23 @@ class KotakApi {
     required String baseUrl,
     required String greetingName,
     required String loginDate,
+    String? feedUrl,
   }) async {
     _sessionToken = sessionToken;
     _sessionSid = sessionSid;
     _baseUrl = baseUrl;
     _greetingName = greetingName;
     _loginDate = loginDate;
+    if (feedUrl != null) _feedUrl = feedUrl;
 
     await _storage.write(key: _keySessionToken, value: sessionToken);
     await _storage.write(key: _keySessionSid, value: sessionSid);
     await _storage.write(key: _keySessionBaseUrl, value: baseUrl);
     await _storage.write(key: _keyGreetingName, value: greetingName);
     await _storage.write(key: _keyLoginDate, value: loginDate);
+    if (feedUrl != null) {
+      await _storage.write(key: _keyFeedUrl, value: feedUrl);
+    }
   }
 
   /// Deletes saved session from secure storage and clears in-memory session
@@ -337,6 +488,7 @@ class KotakApi {
     await _storage.delete(key: _keySessionBaseUrl);
     await _storage.delete(key: _keyGreetingName);
     await _storage.delete(key: _keyLoginDate);
+    await _storage.delete(key: _keyFeedUrl);
     logout();
   }
 
@@ -354,6 +506,7 @@ class KotakApi {
       final sid = await _storage.read(key: _keySessionSid);
       final base = await _storage.read(key: _keySessionBaseUrl);
       final greeting = await _storage.read(key: _keyGreetingName);
+      final feed = await _storage.read(key: _keyFeedUrl);
 
       if (token != null && token.isNotEmpty && base != null && base.isNotEmpty) {
         _sessionToken = token;
@@ -361,6 +514,7 @@ class KotakApi {
         _baseUrl = base;
         _greetingName = greeting;
         _loginDate = savedDate;
+        _feedUrl = feed;
         return true;
       }
     }
@@ -378,6 +532,7 @@ class KotakApi {
     String? baseUrl,
     String? greetingName,
     String? loginDate,
+    String? feedUrl,
   }) {
     _accessToken = accessToken;
     _sessionToken = sessionToken;
@@ -385,6 +540,7 @@ class KotakApi {
     _baseUrl = baseUrl;
     _greetingName = greetingName;
     _loginDate = loginDate ?? getTodayIstDate();
+    _feedUrl = feedUrl;
   }
 
   /// Clears in-memory session tokens
@@ -396,6 +552,7 @@ class KotakApi {
     _baseUrl = null;
     _greetingName = null;
     _loginDate = null;
+    _feedUrl = null;
   }
 
   // --- Profile Storage (flutter_secure_storage) ---

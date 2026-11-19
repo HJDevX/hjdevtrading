@@ -3,6 +3,7 @@ import 'package:hjdev_trading/screens/home_screen.dart';
 import 'package:hjdev_trading/utils/app_sizes.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 

@@ -39,42 +39,69 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
   }
 
   Future<void> _refreshQuotes() async {
-    if (!_api.isLoggedIn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Login first'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-      return;
+    if (_api.accessToken == null || _api.accessToken!.isEmpty) {
+      if (!_api.isLoggedIn) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Login first'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        return;
+      }
     }
 
     if (_items.isEmpty) return;
 
     setState(() => _isRefreshingQuotes = true);
 
-    final updatedQuotes = Map<int, Quote>.from(_quotes);
+    // Resolve missing tokens
+    final resolvedItems = <WatchItem>[];
     for (final item in _items) {
+      if (item.token == null || item.token!.trim().isEmpty) {
+        final lookedUp =
+            await _db.findTokenBySymbolAndSegment(item.symbol, item.exchange);
+        if (lookedUp != null && lookedUp.trim().isNotEmpty) {
+          if (item.id != null) {
+            await _db.updateItemToken(item.id!, lookedUp);
+          }
+          resolvedItems.add(item.copyWith(token: lookedUp));
+          continue;
+        }
+      }
+      resolvedItems.add(item);
+    }
+
+    if (mounted) {
+      setState(() => _items = resolvedItems);
+    }
+
+    final validItems = _items
+        .where((it) => it.token != null && it.token!.trim().isNotEmpty)
+        .toList();
+
+    if (validItems.isNotEmpty) {
       try {
-        final quote = await _api.getQuote(
-          item.symbol,
-          item.exchange,
-          token: item.token,
-        );
-        if (item.id != null) {
-          updatedQuotes[item.id!] = quote;
+        final batchQuotes = await _api.getQuotesBatch(validItems);
+        final updatedQuotes = Map<int, Quote>.from(_quotes);
+        for (final item in _items) {
+          if (item.id != null && item.token != null && batchQuotes.containsKey(item.token)) {
+            updatedQuotes[item.id!] = batchQuotes[item.token]!;
+          }
+        }
+        if (mounted) {
+          setState(() {
+            _quotes.clear();
+            _quotes.addAll(updatedQuotes);
+          });
         }
       } catch (e) {
-        debugPrint('Failed to fetch quote for ${item.symbol}: $e');
+        debugPrint('Failed to batch fetch quotes: $e');
       }
     }
 
     if (mounted) {
-      setState(() {
-        _quotes.clear();
-        _quotes.addAll(updatedQuotes);
-        _isRefreshingQuotes = false;
-      });
+      setState(() => _isRefreshingQuotes = false);
     }
   }
 
@@ -119,33 +146,9 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                widget.watchlist.name,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.amber.shade800,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'PAPER',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ),
-          ],
+        title: Text(
+          widget.watchlist.name,
+          overflow: TextOverflow.ellipsis,
         ),
         actions: [
           IconButton(
@@ -202,7 +205,16 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (quote != null) ...[
+                          if (item.token == null || item.token!.trim().isEmpty)
+                            const Text(
+                              'Token missing — re-add this stock from search',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Color(0xFFFFB300),
+                                fontStyle: FontStyle.italic,
+                              ),
+                            )
+                          else if (quote != null) ...[
                             Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               crossAxisAlignment: CrossAxisAlignment.end,

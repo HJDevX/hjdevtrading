@@ -211,6 +211,51 @@ class AppDb {
     return count ?? 0;
   }
 
+  /// Looks up token from scrips table by symbol and segment (for legacy rows)
+  Future<String?> findTokenBySymbolAndSegment(String symbol, String segment) async {
+    final db = await database;
+    String cleanSegment = segment.toLowerCase().trim();
+    if (cleanSegment == 'nse') cleanSegment = 'nse_cm';
+    if (cleanSegment == 'bse') cleanSegment = 'bse_cm';
+    if (cleanSegment == 'nfo') cleanSegment = 'nse_fo';
+    if (cleanSegment == 'mcx') cleanSegment = 'mcx_fo';
+
+    final results = await db.query(
+      'scrips',
+      columns: ['token'],
+      where: 'symbol = ? AND (segment = ? OR exchange = ?)',
+      whereArgs: [symbol.toUpperCase(), cleanSegment, cleanSegment],
+      limit: 1,
+    );
+    if (results.isNotEmpty) {
+      return results.first['token'] as String?;
+    }
+
+    // Fallback: search just by symbol if segment didn't match
+    final fallback = await db.query(
+      'scrips',
+      columns: ['token'],
+      where: 'symbol = ?',
+      whereArgs: [symbol.toUpperCase()],
+      limit: 1,
+    );
+    if (fallback.isNotEmpty) {
+      return fallback.first['token'] as String?;
+    }
+    return null;
+  }
+
+  /// Updates token on a watchlist item
+  Future<void> updateItemToken(int itemId, String token) async {
+    final db = await database;
+    await db.update(
+      'watch_items',
+      {'token': token},
+      where: 'id = ?',
+      whereArgs: [itemId],
+    );
+  }
+
   // --- Scrips Search & Master Storage ---
 
   /// Search scrips with text query and optional category filter

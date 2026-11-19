@@ -232,34 +232,10 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
       backgroundColor: const Color(0xFF0F1216),
       appBar: AppBar(
         backgroundColor: const Color(0xFF0F1216),
-        title: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                'Add to ${widget.watchlist.name}',
-                style: const TextStyle(color: Colors.white, fontSize: 17),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-              decoration: BoxDecoration(
-                color: Colors.amber.shade800,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: const Text(
-                'PAPER',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ),
-          ],
+        title: Text(
+          'Add to ${widget.watchlist.name}',
+          style: const TextStyle(color: Colors.white, fontSize: 17),
+          overflow: TextOverflow.ellipsis,
         ),
         actions: [
           // Refresh Button (⟳) in AppBar

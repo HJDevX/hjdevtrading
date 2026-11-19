@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
 import 'package:hjdev_trading/db/app_db.dart';
@@ -192,7 +193,7 @@ void main() {
       api.setMockClient(mockClient);
 
       expect(
-        () => api.getQuote('RELIANCE', 'NSE'),
+        () => api.getQuote('RELIANCE', 'NSE', token: '2885'),
         throwsA(isA<KotakApiException>().having((e) => e.statusCode, 'statusCode', 403)),
       );
 
@@ -231,7 +232,7 @@ void main() {
       api.setMockClient(mockClient);
 
       expect(
-        () => api.getQuote('TCS', 'NSE'),
+        () => api.getQuote('TCS', 'NSE', token: '11536'),
         throwsA(isA<KotakApiException>()),
       );
 
@@ -246,6 +247,10 @@ void main() {
     setUpAll(() async {
       sqfliteFfiInit();
       databaseFactory = databaseFactoryFfi;
+      AppDb.dbName = 'session_persistence_test.db';
+      await AppDb.resetDatabase();
+      final dbPath = await getDatabasesPath();
+      await databaseFactoryFfi.deleteDatabase(p.join(dbPath, AppDb.dbName));
       await AppDb.instance.database;
     });
 
@@ -271,7 +276,7 @@ void main() {
       expect(find.text('Step 1: Neo Trade API Credentials'), findsNothing);
     });
 
-    testWidgets('Tapping Logout button on Watchlists app bar shows confirm dialog and returns to login screen', (tester) async {
+    testWidgets('Tapping Logout button on Kotak Login screen clears session and returns to login credentials', (tester) async {
       KotakApi.sessionExpiredNotifier.value = null;
       FlutterSecureStorage.setMockInitialValues({
         'kotak_session_token': 'valid_token',
@@ -285,27 +290,22 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 200));
 
-      // Find Logout button
-      final logoutBtn = find.byTooltip('Logout from Kotak Neo');
+      // Switch to Kotak Login tab
+      await tester.tap(find.text('Kotak Login'));
+      await tester.pump(const Duration(milliseconds: 200));
+
+      // Verify active session banner is shown with Logout button
+      expect(find.text('Logged In'), findsOneWidget);
+      final logoutBtn = find.widgetWithText(OutlinedButton, 'Logout');
       expect(logoutBtn, findsOneWidget);
 
       await tester.tap(logoutBtn);
       await tester.pump(const Duration(milliseconds: 300));
 
-      // Verify dialog is shown
-      expect(find.text('Are you sure you want to logout from Kotak Neo?'), findsOneWidget);
-      expect(find.text('Cancel'), findsOneWidget);
-
-      // Tap 'Logout' confirm button in dialog
-      final confirmBtn = find.widgetWithText(FilledButton, 'Logout');
-      expect(confirmBtn, findsOneWidget);
-      await tester.tap(confirmBtn);
-      await tester.pump(const Duration(milliseconds: 300));
-
       // Session in KotakApi must be cleared
       expect(KotakApi.instance.isLoggedIn, false);
 
-      // HomeScreen should switch to Kotak Login tab
+      // Should now show Step 1 login fields
       expect(find.text('Step 1 — Verify TOTP'), findsOneWidget);
       expect(find.text('Step 1: Neo Trade API Credentials'), findsOneWidget);
     });

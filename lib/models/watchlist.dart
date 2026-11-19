@@ -86,4 +86,30 @@ class WatchItem {
       lotSize: map['lot_size'] != null ? (map['lot_size'] as num).toInt() : null,
     );
   }
+
+  WatchItem copyWith({
+    int? id,
+    int? watchlistId,
+    String? symbol,
+    String? exchange,
+    String? token,
+    String? displayName,
+    String? instrumentType,
+    String? expiry,
+    double? strike,
+    int? lotSize,
+  }) {
+    return WatchItem(
+      id: id ?? this.id,
+      watchlistId: watchlistId ?? this.watchlistId,
+      symbol: symbol ?? this.symbol,
+      exchange: exchange ?? this.exchange,
+      token: token ?? this.token,
+      displayName: displayName ?? this.displayName,
+      instrumentType: instrumentType ?? this.instrumentType,
+      expiry: expiry ?? this.expiry,
+      strike: strike ?? this.strike,
+      lotSize: lotSize ?? this.lotSize,
+    );
+  }
 }

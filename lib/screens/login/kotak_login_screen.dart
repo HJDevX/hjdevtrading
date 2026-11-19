@@ -49,6 +49,7 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
   void _onSessionExpired() {
     final msg = KotakApi.sessionExpiredNotifier.value;
     if (msg != null && mounted) {
+      _api.logout();
       setState(() {
         _stage = 1;
         _errorMessage = msg;
@@ -210,6 +211,26 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
     }
   }
 
+  Widget _buildSessionDetailRow(String label, String value) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
+        ),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 13,
+            color: Colors.white,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isLoggedIn = _api.isLoggedIn;
@@ -220,69 +241,111 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Active session banner if already logged in
+            // When user is logged in, show active session & profile details ONLY (no Step 1 / Step 2 inputs)
             if (isLoggedIn) ...[
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(20),
                 decoration: BoxDecoration(
-                  color: Colors.green.withAlpha(25),
-                  border: Border.all(color: Colors.green.shade400),
-                  borderRadius: BorderRadius.circular(10),
+                  color: const Color(0xFF14171C),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF1E2228)),
                 ),
-                child: Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.check_circle, color: Colors.green, size: 28),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Logged In',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green,
-                              fontSize: 15,
-                            ),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withAlpha(30),
+                            shape: BoxShape.circle,
                           ),
-                          Text(
-                            'Client: ${_api.ucc ?? "Active"}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade700,
-                            ),
+                          child: const Icon(
+                            Icons.check_circle,
+                            color: Color(0xFF00C853),
+                            size: 28,
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _api.greetingName?.isNotEmpty == true
+                                    ? _api.greetingName!
+                                    : 'Logged In',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              const Text(
+                                'Active Trading Session (Today)',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF00C853),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
-                    OutlinedButton(
-                      onPressed: _handleLogout,
-                      child: const Text('Logout'),
+                    const SizedBox(height: 20),
+                    const Divider(color: Color(0xFF1E2228)),
+                    const SizedBox(height: 14),
+                    _buildSessionDetailRow('Client Code (UCC)', _api.ucc ?? '-'),
+                    const SizedBox(height: 10),
+                    _buildSessionDetailRow('Mobile Number', _api.mobileNumber ?? '-'),
+                    const SizedBox(height: 10),
+                    _buildSessionDetailRow('Session Date (IST)', _api.loginDate ?? '-'),
+                    const SizedBox(height: 24),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.redAccent,
+                          side: const BorderSide(color: Colors.redAccent),
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: _handleLogout,
+                        icon: const Icon(Icons.logout, size: 18),
+                        label: const Text(
+                          'Logout',
+                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                        ),
+                      ),
                     ),
                   ],
                 ),
               ),
-              const SizedBox(height: 24),
-            ],
+            ] else ...[
+              // Stage Header (Only shown when NOT logged in)
+              Text(
+                _stage == 1 ? 'Step 1: Neo Trade API Credentials' : 'Step 2: Enter MPIN',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _stage == 1
+                    ? 'Access Token, Mobile, and UCC will be saved securely. Enter daily TOTP.'
+                    : 'Enter your 6-digit MPIN to complete the session login.',
+                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+              ),
+              const SizedBox(height: 20),
 
-            // Stage Header
-            Text(
-              _stage == 1 ? 'Step 1: Neo Trade API Credentials' : 'Step 2: Enter MPIN',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _stage == 1
-                  ? 'Access Token, Mobile, and UCC will be saved securely. Enter daily TOTP.'
-                  : 'Enter your 6-digit MPIN to complete the session login.',
-              style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-            ),
-            const SizedBox(height: 20),
-
-            // --- STAGE 1 FIELDS ---
-            if (_stage == 1) ...[
+              // --- STAGE 1 FIELDS ---
+              if (_stage == 1) ...[
               // Access Token
               TextField(
                 controller: _accessTokenController,
@@ -458,6 +521,7 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
                       ),
               ),
             ],
+          ],
 
             // Red error text under button
             if (_errorMessage != null) ...[

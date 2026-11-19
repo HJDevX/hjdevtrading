@@ -111,5 +111,44 @@ void main() {
       expect(api.isLoggedIn, true);
       expect(switched, true);
     });
+
+    testWidgets('When user is logged in, do NOT show Step 1 verify fields', (tester) async {
+      api.setSessionForTesting(
+        accessToken: 'valid_access_token',
+        sessionToken: 'valid_session_token',
+        sessionSid: 'valid_session_sid',
+        baseUrl: 'https://gw.kotaksecurities.com',
+        greetingName: 'Trader Rahul',
+      );
+      expect(api.isLoggedIn, true);
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: KotakLoginScreen(),
+        ),
+      );
+      await tester.pump();
+
+      // Must NOT show Step 1 or Step 2 fields
+      expect(find.text('Step 1 — Verify TOTP'), findsNothing);
+      expect(find.text('Step 1: Neo Trade API Credentials'), findsNothing);
+      expect(find.text('Access Token *'), findsNothing);
+      expect(find.text('Daily TOTP (6 Digits) *'), findsNothing);
+      expect(find.text('Step 2 — Login'), findsNothing);
+
+      // Must show logged in details and Logout button
+      expect(find.text('Trader Rahul'), findsOneWidget);
+      expect(find.text('Active Trading Session (Today)'), findsOneWidget);
+      final logoutBtn = find.widgetWithText(OutlinedButton, 'Logout');
+      expect(logoutBtn, findsOneWidget);
+
+      // Tapping Logout clears session and transitions to Step 1
+      await tester.tap(logoutBtn);
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(api.isLoggedIn, false);
+      expect(find.text('Step 1 — Verify TOTP'), findsOneWidget);
+      expect(find.text('Step 1: Neo Trade API Credentials'), findsOneWidget);
+    });
   });
 }
