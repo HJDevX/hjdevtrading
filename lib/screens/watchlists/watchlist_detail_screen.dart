@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:hjdev_trading/db/app_db.dart';
+import 'package:hjdev_trading/models/quote.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
+import 'package:hjdev_trading/screens/watchlists/instrument_search_screen.dart';
+import 'package:hjdev_trading/services/kotak_api.dart';
 
 class WatchlistDetailScreen extends StatefulWidget {
   final Watchlist watchlist;
@@ -13,8 +16,12 @@ class WatchlistDetailScreen extends StatefulWidget {
 
 class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
   final AppDb _db = AppDb.instance;
+  final KotakApi _api = KotakApi.instance;
+
   List<WatchItem> _items = [];
+  final Map<int, Quote> _quotes = {};
   bool _isLoading = true;
+  bool _isRefreshingQuotes = false;
 
   @override
   void initState() {
@@ -31,108 +38,61 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
     });
   }
 
-  Future<void> _showAddStockDialog() async {
-    final symbolController = TextEditingController();
-    final companyController = TextEditingController();
-    String selectedExchange = 'nse_cm';
+  Future<void> _refreshQuotes() async {
+    if (!_api.isLoggedIn) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Login first'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
 
-    await showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Add Stock'),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: symbolController,
-                      autofocus: true,
-                      textCapitalization: TextCapitalization.characters,
-                      decoration: const InputDecoration(
-                        labelText: 'Symbol *',
-                        hintText: 'e.g. RELIANCE, TCS, INFY',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: companyController,
-                      decoration: const InputDecoration(
-                        labelText: 'Company Name (Optional)',
-                        hintText: 'e.g. Tata Consultancy Services',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedExchange,
-                      decoration: const InputDecoration(
-                        labelText: 'Exchange',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'nse_cm',
-                          child: Text('NSE'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'bse_cm',
-                          child: Text('BSE'),
-                        ),
-                      ],
-                      onChanged: (val) {
-                        if (val != null) {
-                          setDialogState(() => selectedExchange = val);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    final symbol = symbolController.text.trim().toUpperCase();
-                    if (symbol.isEmpty) return;
+    if (_items.isEmpty) return;
 
-                    final company = companyController.text.trim();
-                    final item = WatchItem(
-                      watchlistId: widget.watchlist.id!,
-                      symbol: symbol,
-                      exchange: selectedExchange,
-                      displayName: company.isNotEmpty ? company : symbol,
-                    );
+    setState(() => _isRefreshingQuotes = true);
 
-                    await _db.addItem(item);
-                    if (ctx.mounted) {
-                      Navigator.pop(ctx);
-                    }
-                    if (mounted) {
-                      _loadItems();
-                    }
-                  },
-                  child: const Text('Add'),
-                ),
-              ],
-            );
-          },
+    final updatedQuotes = Map<int, Quote>.from(_quotes);
+    for (final item in _items) {
+      try {
+        final quote = await _api.getQuote(
+          item.symbol,
+          item.exchange,
+          token: item.token,
         );
-      },
+        if (item.id != null) {
+          updatedQuotes[item.id!] = quote;
+        }
+      } catch (e) {
+        debugPrint('Failed to fetch quote for ${item.symbol}: $e');
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _quotes.clear();
+        _quotes.addAll(updatedQuotes);
+        _isRefreshingQuotes = false;
+      });
+    }
+  }
+
+  Future<void> _openSearchScreen() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => InstrumentSearchScreen(watchlist: widget.watchlist),
+      ),
     );
+    _loadItems();
   }
 
   Future<void> _deleteItem(WatchItem item) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remove Stock'),
+        title: const Text('Remove Instrument'),
         content: Text('Remove ${item.symbol} from ${widget.watchlist.name}?'),
         actions: [
           TextButton(
@@ -150,6 +110,7 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
 
     if (confirmed == true && item.id != null) {
       await _db.removeItem(item.id!);
+      _quotes.remove(item.id);
       _loadItems();
     }
   }
@@ -186,6 +147,22 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: _isRefreshingQuotes
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.refresh),
+            tooltip: 'Refresh Quotes',
+            onPressed: _isRefreshingQuotes ? null : _refreshQuotes,
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -198,14 +175,14 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                           size: 48, color: Colors.grey.shade400),
                       const SizedBox(height: 12),
                       const Text(
-                        'No stocks in this watchlist',
+                        'No instruments in this watchlist',
                         style: TextStyle(fontSize: 16, color: Colors.grey),
                       ),
                       const SizedBox(height: 16),
                       FilledButton.icon(
-                        onPressed: _showAddStockDialog,
+                        onPressed: _openSearchScreen,
                         icon: const Icon(Icons.add),
-                        label: const Text('Add Stock'),
+                        label: const Text('Add Instrument'),
                       ),
                     ],
                   ),
@@ -215,61 +192,51 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                   separatorBuilder: (context, index) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final item = _items[index];
-                    final isNse = item.exchange == 'nse_cm';
+                    final quote = item.id != null ? _quotes[item.id] : null;
+
                     return ListTile(
                       contentPadding:
                           const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                      title: Row(
-                        children: [
-                          Text(
-                            item.symbol,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 5, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: isNse
-                                  ? Colors.blue.withAlpha(30)
-                                  : Colors.purple.withAlpha(30),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              isNse ? 'NSE' : 'BSE',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: isNse ? Colors.blue : Colors.purple,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      subtitle: Text(
-                        item.displayName,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey.shade600,
-                        ),
-                      ),
+                      title: _buildRowTitle(item),
+                      subtitle: _buildRowSubtitle(item),
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Text(
-                            '—',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
+                          if (quote != null) ...[
+                            Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  '₹${quote.ltp.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  '${quote.changePct >= 0 ? "+" : ""}${quote.changePct.toStringAsFixed(2)}%',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                    color: quote.changePct >= 0
+                                        ? Colors.green
+                                        : Colors.red,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(width: 12),
+                          ] else ...[
+                            const Text(
+                              '—',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                          const SizedBox(width: 8),
                           IconButton(
                             icon: const Icon(Icons.delete_outline,
                                 color: Colors.redAccent),
@@ -282,9 +249,89 @@ class _WatchlistDetailScreenState extends State<WatchlistDetailScreen> {
                   },
                 ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _showAddStockDialog,
-        icon: const Icon(Icons.add),
-        label: const Text('Add Stock'),
+        onPressed: _openSearchScreen,
+        icon: const Icon(Icons.search),
+        label: const Text('Add Instrument'),
+      ),
+    );
+  }
+
+  Widget _buildRowTitle(WatchItem item) {
+    final type = item.instrumentType ?? 'EQ';
+    final isMcx = item.exchange == 'mcx_fo';
+    final isNse = item.exchange == 'nse_cm' || item.exchange == 'nse_fo';
+
+    Color tagColor = Colors.blue;
+    String tagLabel = isMcx ? 'MCX' : (isNse ? 'NSE' : 'BSE');
+    if (type == 'CE') {
+      tagColor = Colors.green;
+      tagLabel = 'CE';
+    } else if (type == 'PE') {
+      tagColor = Colors.red;
+      tagLabel = 'PE';
+    } else if (type == 'FUT') {
+      tagColor = Colors.orange;
+      tagLabel = 'FUT';
+    }
+
+    return Row(
+      children: [
+        Flexible(
+          child: Text(
+            item.symbol,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 15,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: tagColor.withAlpha(30),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            tagLabel,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: tagColor,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildRowSubtitle(WatchItem item) {
+    final details = <String>[];
+    if (item.strike != null && item.strike! > 0) {
+      details.add('Strike: ${item.strike!.toStringAsFixed(0)}');
+    }
+    if (item.expiry != null && item.expiry!.isNotEmpty) {
+      details.add('Exp: ${item.expiry!}');
+    }
+    if (item.lotSize != null && item.lotSize! > 1) {
+      details.add('Lot: ${item.lotSize!}');
+    }
+
+    if (details.isNotEmpty) {
+      return Text(
+        details.join(' | '),
+        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+      );
+    }
+
+    return Text(
+      item.displayName,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(
+        fontSize: 12,
+        color: Colors.grey.shade600,
       ),
     );
   }

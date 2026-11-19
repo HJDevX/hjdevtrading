@@ -1,24 +1,26 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:hjdev_trading/db/app_db.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
 
 void main() {
-  setUpAll(() {
+  setUpAll(() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+    AppDb.dbName = 'watchlist_flow_test.db';
+    await AppDb.resetDatabase();
+    final dbPath = await getDatabasesPath();
+    await databaseFactoryFfi.deleteDatabase(p.join(dbPath, AppDb.dbName));
   });
 
   test('Step 3 Verification Flow: create 3 lists, rename one, delete one, add 2 stocks to each, restart DB', () async {
     final db = AppDb.instance;
 
-    // 1. Initial state has seeded list
+    // 1. Initial state has default watchlist
     final initialLists = await db.getWatchlists();
     expect(initialLists.isNotEmpty, true);
-    expect(initialLists.first.name, 'My First List');
-    final initialItems = await db.getItems(initialLists.first.id!);
-    expect(initialItems.length, 1);
-    expect(initialItems.first.symbol, 'JKPAPER');
+    expect(initialLists.first.name, 'Watchlist 1');
 
     // 2. Create 3 new lists
     final id1 = await db.createWatchlist('Banking');

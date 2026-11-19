@@ -14,18 +14,23 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       title: 'HJDev Trading',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueGrey,
-          brightness: Brightness.light,
-        ),
-      ),
+      themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueGrey,
-          brightness: Brightness.dark,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0F1216),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF387ED1),
+          surface: Color(0xFF16191E),
+        ),
+      ),
+      theme: ThemeData(
+        useMaterial3: true,
+        brightness: Brightness.dark,
+        scaffoldBackgroundColor: const Color(0xFF0F1216),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF387ED1),
+          surface: Color(0xFF16191E),
         ),
       ),
       builder: (context, child) {

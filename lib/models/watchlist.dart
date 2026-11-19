@@ -36,6 +36,10 @@ class WatchItem {
   final String exchange;
   final String? token;
   final String displayName;
+  final String? instrumentType; // EQ / FUT / CE / PE
+  final String? expiry;
+  final double? strike;
+  final int? lotSize;
 
   WatchItem({
     this.id,
@@ -44,6 +48,10 @@ class WatchItem {
     this.exchange = 'nse_cm',
     this.token,
     required this.displayName,
+    this.instrumentType,
+    this.expiry,
+    this.strike,
+    this.lotSize,
   });
 
   Map<String, dynamic> toMap() {
@@ -53,6 +61,10 @@ class WatchItem {
       'exchange': exchange,
       'token': token,
       'display_name': displayName,
+      'instrument_type': instrumentType,
+      'expiry': expiry,
+      'strike': strike,
+      'lot_size': lotSize,
     };
     if (id != null) {
       map['id'] = id;
@@ -68,6 +80,10 @@ class WatchItem {
       exchange: map['exchange'] as String? ?? 'nse_cm',
       token: map['token'] as String?,
       displayName: map['display_name'] as String,
+      instrumentType: map['instrument_type'] as String?,
+      expiry: map['expiry'] as String?,
+      strike: map['strike'] != null ? (map['strike'] as num).toDouble() : null,
+      lotSize: map['lot_size'] != null ? (map['lot_size'] as num).toInt() : null,
     );
   }
 }
