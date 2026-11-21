@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:hjdev_trading/models/quote.dart';
@@ -20,10 +21,12 @@ enum IndexFeedState {
 /// Built strictly from Kotak's official "Market Data WebSocket —
 /// Developer Guide":
 ///  - Connect to `feedUrl` from the login-validate response (https -> wss)
-///  - Auth = one JSON text frame; success = message_code 1117, which
-///    carries per-exchange price dividers as an OBJECT keyed by segment
-///    name, e.g. {"nse_cm": {"divider": 100}}
-///  - 1120 = auth failed; 1119 = initial frame (dividers, not success)
+///  - Auth = one JSON text frame; success = message_code 1117 — or
+///    1119, which is what the production server actually sends (both
+///    carry the per-exchange price dividers as an OBJECT keyed by
+///    segment name, e.g. {"nse_cm": {"divider": 100}})
+///  - 1120 = auth failed (also the reply when the auth frame is
+///    missing fields the server requires — see _sendAuth)
 ///  - Indices subscribe with event "subscribeIndices", inputtoken
 ///    "nse_cm|26000"; index packets are message_code 7207, 87 bytes,
 ///    little-endian, prices = raw / divider
@@ -183,14 +186,15 @@ class IndexFeedService {
         cancelOnError: false,
       );
       _setState(IndexFeedState.authenticating);
-      _sendAuth(channel, useSid: !_triedTokenAuth);
+      _sendAuth(channel, useSid: !_triedTokenAuth, gen: gen);
     } catch (e) {
       debugPrint('IndexFeed: connect exception: $e');
       _onSocketDown();
     }
   }
 
-  void _sendAuth(WebSocketChannel channel, {required bool useSid}) {
+  void _sendAuth(WebSocketChannel channel,
+      {required bool useSid, required int gen}) {
     final api = KotakApi.instance;
     final authValue = useSid ? api.sessionSid : api.sessionToken;
     if (authValue == null || authValue.isEmpty || api.ucc == null) {
@@ -198,25 +202,54 @@ class IndexFeedService {
       _setState(IndexFeedState.error);
       return;
     }
+    // This frame mirrors what Kotak's own client sends, verified
+    // against a production integration (OpenAlgo): the server REJECTS
+    // the frame (1120) when fields are missing. platform, version,
+    // conn_req_time and sessionValidation must all be present, and
+    // sdk_version is the integer 2 — the short frame from the PDF
+    // guide (sdk_version 1.1, date-only sdk_date, nothing else) is
+    // what got us 1120.
+    final now = DateTime.now();
     final frame = jsonEncode({
       'user': api.ucc,
       'auth': authValue,
       'format': 'native_batch',
       'source': 'NEOTRADEAPI',
-      'sdk_version': 1.1,
-      'sdk_date': '2026-11-21',
+      'platform': 'Web',
+      'version': '1.2.3',
+      'sdk_version': 2,
+      'sdk_date': now.toUtc().toIso8601String(),
+      'conn_req_time': now.millisecondsSinceEpoch,
+      'sessionValidation': false,
     });
     try {
       channel.sink.add(frame);
       // Never print the credential itself — only which kind was sent.
       debugPrint(
           'IndexFeed: auth frame sent (auth = ${useSid ? 'SID' : 'TOKEN'})');
+      _startAuthWatchdog(gen);
     } catch (e) {
       debugPrint('IndexFeed: auth send failed: $e');
     }
   }
 
+  /// A rejected auth can look exactly like a quiet market: the socket
+  /// stays open and nothing arrives. If no auth reply lands within
+  /// 15 seconds, close and let the reconnect logic retry.
+  Timer? _authTimer;
+  void _startAuthWatchdog(int gen) {
+    _authTimer?.cancel();
+    _authTimer = Timer(const Duration(seconds: 15), () {
+      if (gen != _generation) return;
+      if (_state == IndexFeedState.authenticating) {
+        debugPrint('IndexFeed: no auth reply in 15s — closing to retry');
+        _onSocketDown();
+      }
+    });
+  }
+
   void _cleanupChannel() {
+    _authTimer?.cancel();
     try {
       _subscription?.cancel();
     } catch (_) {}
@@ -308,11 +341,27 @@ class IndexFeedService {
         : int.tryParse(codeRaw?.toString() ?? '');
     debugPrint('IndexFeed: auth/control message_code=$code');
 
-    if (code == 1119) {
-      // Initial connect frame — carries dividers, not yet success.
-      _storeDividers(decoded);
-    } else if (code == 1117) {
-      // AUTH SUCCESS
+    if (decoded['format'] == 'native_fallback') {
+      // The server refused native_batch and downgraded the connection;
+      // our binary decoder cannot read the fallback format. Stop
+      // rather than decode garbage.
+      debugPrint(
+          'IndexFeed: server downgraded to native_fallback — stopping');
+      _manualClose = true;
+      _generation++;
+      _cleanupChannel();
+      _setState(IndexFeedState.error);
+      return;
+    }
+
+    if (code == 1117 || code == 1119) {
+      // AUTH SUCCESS. 1117 is the code in Kotak's PDF guide, but 1119
+      // is what the production server actually sends (verified against
+      // a live integration, OpenAlgo: MSG_AUTH_RESPONSE_CODES =
+      // (1117, 1119)). Treating 1119 as "not yet success" was a bug —
+      // the feed authenticated but never subscribed, so no index
+      // prices ever arrived.
+      _authTimer?.cancel();
       _storeDividers(decoded);
       _tokenAuthWorked = _triedTokenAuth;
       _retryCount = 0;
@@ -343,13 +392,18 @@ class IndexFeedService {
       final exchanges = decoded['exchanges'];
       if (exchanges is Map) {
         exchanges.forEach((name, info) {
-          final code = _codeBySegment[name.toString().toLowerCase()];
-          if (code != null && info is Map) {
-            final d = info['divider'];
-            final value =
-                d is num ? d.toDouble() : double.tryParse(d?.toString() ?? '');
-            if (value != null && value > 0) _dividers[code] = value;
-          }
+          if (info is! Map) return;
+          // Prefer the numeric exchange id the reply itself states
+          // ("value") over our static name->id map, so a server-side
+          // renumbering cannot silently misscale a whole segment.
+          final stated = info['value'];
+          final code = (stated is num ? stated.toInt() : null) ??
+              _codeBySegment[name.toString().toLowerCase()];
+          if (code == null) return;
+          final d = info['divider'];
+          final value =
+              d is num ? d.toDouble() : double.tryParse(d?.toString() ?? '');
+          if (value != null && value > 0) _dividers[code] = value;
         });
       }
     } catch (e) {
