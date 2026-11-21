@@ -223,7 +223,14 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
       _closeProgress();
       var total = 0;
       counts.forEach((_, v) => total += v);
-      _snack('Instruments updated ($total rows)', green: true);
+      final failed = _scripService.lastFailedSegments;
+      if (failed.isEmpty) {
+        _snack('Instruments updated ($total rows)', green: true);
+      } else {
+        _snack(
+            'Updated $total rows, but ${failed.join(', ')} failed — tap download again (Wi-Fi helps, the F&O file is ~31 MB)',
+            green: false);
+      }
       _loadData();
     };
     _scripService.onError = (msg) {

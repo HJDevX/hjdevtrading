@@ -29,6 +29,12 @@ class ScripMasterService {
   bool _isRefreshing = false;
   bool get isRefreshing => _isRefreshing;
 
+  /// Segments that failed in the most recent refresh (empty = all
+  /// fine). The UI reads this after onSuccess to warn about a partial
+  /// update, instead of crying "download failed" when only one of the
+  /// four files failed.
+  List<String> lastFailedSegments = [];
+
   void Function(String)? onProgress;
   void Function(String)? onError;
   void Function(Map<String, int>)? onSuccess;
@@ -63,6 +69,7 @@ class ScripMasterService {
     if (_isRefreshing) return;
     _isRefreshing = true;
 
+    lastFailedSegments = [];
     try {
       final allScripsData = <Map<String, dynamic>>[];
       final counts = <String, int>{};
@@ -102,7 +109,11 @@ class ScripMasterService {
           csvContent = await _downloadWithFallback(seg);
         }
         if (csvContent == null || csvContent.isEmpty) {
-          onError?.call('Failed to download instruments for $seg');
+          // Record and keep going — one failed segment must not fail
+          // the whole refresh (the old code reported an error here,
+          // which closed the progress dialog and looked like a total
+          // failure even when the other files were fine).
+          lastFailedSegments.add(seg);
           continue;
         }
 
@@ -126,6 +137,8 @@ class ScripMasterService {
           if (seg == 'mcx_fo') {
             counts['mcx_fo_COMMODITY'] = parsedList.length;
           }
+        } else {
+          lastFailedSegments.add(seg);
         }
       }
 
@@ -161,9 +174,12 @@ class ScripMasterService {
           'Authorization': KotakApi.instance.accessToken!,
         'neo-fin-key': KotakApi.neoFinKey,
       };
+      // 180 seconds: the nse_fo file is ~31 MB (every option contract
+      // in the market). The old 45s limit timed out on phone networks
+      // and made the whole download look broken.
       final res = await _client
           .get(Uri.parse(url), headers: headers)
-          .timeout(const Duration(seconds: 45));
+          .timeout(const Duration(seconds: 180));
       if (res.statusCode >= 200 && res.statusCode < 300) {
         return res.body;
       }
