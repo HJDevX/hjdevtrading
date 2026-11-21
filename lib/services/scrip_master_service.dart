@@ -79,6 +79,8 @@ class ScripMasterService {
       try {
         filePaths = await _fetchDynamicFilePaths();
       } catch (_) {}
+      debugPrint(
+          'ScripMaster: dynamic file-paths returned ${filePaths.length} paths');
 
       final segmentFiles = <String, String>{};
       if (filePaths.isNotEmpty) {
@@ -122,6 +124,7 @@ class ScripMasterService {
           'csv': csvContent,
           'segment': seg,
         });
+        debugPrint('ScripMaster: $seg parsed ${parsedList.length} rows');
 
         if (parsedList.isNotEmpty) {
           allScripsData.addAll(parsedList);
@@ -169,21 +172,41 @@ class ScripMasterService {
 
   Future<String?> _downloadCsv(String url) async {
     try {
-      final headers = {
-        if (KotakApi.instance.accessToken != null)
-          'Authorization': KotakApi.instance.accessToken!,
-        'neo-fin-key': KotakApi.neoFinKey,
-      };
+      // The lapi file host serves these CSVs publicly (verified: they
+      // download with no headers at all). Sending a foreign
+      // Authorization header there risks the gateway rejecting the
+      // request, so auth headers go only to the API gateway host.
+      final isPublicFileHost = url.contains('lapi.kotaksecurities.com');
+      final headers = isPublicFileHost
+          ? const <String, String>{}
+          : {
+              if (KotakApi.instance.accessToken != null)
+                'Authorization': KotakApi.instance.accessToken!,
+              'neo-fin-key': KotakApi.neoFinKey,
+            };
       // 180 seconds: the nse_fo file is ~31 MB (every option contract
       // in the market). The old 45s limit timed out on phone networks
       // and made the whole download look broken.
       final res = await _client
           .get(Uri.parse(url), headers: headers)
           .timeout(const Duration(seconds: 180));
+      debugPrint(
+          'ScripMaster: GET $url -> ${res.statusCode}, ${res.body.length} chars');
       if (res.statusCode >= 200 && res.statusCode < 300) {
-        return res.body;
+        // A 200 is not proof of a CSV — a gateway can answer 200 with
+        // an error page, and the old code then parsed junk, got 0 rows
+        // and never tried the fallback. A real scrip CSV's header row
+        // names the pSymbol column (verified against Kotak's files).
+        final firstLine = res.body.split('\n').first;
+        if (firstLine.contains('pSymbol')) {
+          return res.body;
+        }
+        debugPrint(
+            'ScripMaster: 200 but body is not a scrip CSV — treating as failed');
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('ScripMaster: GET $url failed: $e');
+    }
     return null;
   }
 
@@ -235,6 +258,8 @@ class ScripMasterService {
         final res = await _client
             .get(Uri.parse('$baseUrl/$path'), headers: headers)
             .timeout(const Duration(seconds: 15));
+        debugPrint(
+            'ScripMaster: file-paths "$path" -> ${res.statusCode}');
         if (res.statusCode >= 200 && res.statusCode < 300) {
           final decoded = jsonDecode(res.body);
           if (decoded is Map) {
