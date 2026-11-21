@@ -4,13 +4,24 @@ import 'package:hjdev_trading/db/app_db.dart';
 import 'package:hjdev_trading/models/quote.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
 import 'package:hjdev_trading/screens/watchlists/instrument_search_screen.dart';
+import 'package:hjdev_trading/services/index_feed_service.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
+import 'package:hjdev_trading/services/paper_broker.dart';
 import 'package:hjdev_trading/services/scrip_master_service.dart';
 
+/// Main watchlist screen: NIFTY/SENSEX header (live index feed), multiple
+/// watchlists, prices by REST batch poll, tap a row for details and
+/// PAPER buy/sell. Instruments come only from the downloaded scrip
+/// master — no stock name is hardcoded anywhere in this app.
 class WatchlistsScreen extends StatefulWidget {
-  final VoidCallback? onLogout;
+  final bool isLoggedIn;
+  final VoidCallback onLogout;
 
-  const WatchlistsScreen({super.key, this.onLogout});
+  const WatchlistsScreen({
+    super.key,
+    required this.isLoggedIn,
+    required this.onLogout,
+  });
 
   @override
   State<WatchlistsScreen> createState() => _WatchlistsScreenState();
@@ -19,325 +30,257 @@ class WatchlistsScreen extends StatefulWidget {
 class _WatchlistsScreenState extends State<WatchlistsScreen> {
   final AppDb _db = AppDb.instance;
   final KotakApi _api = KotakApi.instance;
+  final IndexFeedService _feed = IndexFeedService.instance;
+  final ScripMasterService _scripService = ScripMasterService.instance;
 
   List<Watchlist> _watchlists = [];
-  int _activeWatchlistIndex = 0;
-  List<WatchItem> _activeItems = [];
-  final Map<String, Quote> _quotes = {};
+  Watchlist? _activeList;
+  List<WatchItem> _items = [];
+  final Map<int, Quote> _quotes = {};
+
   bool _isLoading = true;
   bool _isEditMode = false;
-  Timer? _realtimeTimer;
+  bool _feedConnected = false;
+  String? _scripInfoText;
 
-  // Header Indices Quotes (NIFTY & SENSEX)
-  double _niftyLtp = 25201.55;
-  double _niftyChange = -185.85;
-  double _niftyChangePct = -0.73;
+  // Header indices — null until the first REAL tick arrives.
+  double? _niftyLtp, _niftyPct;
+  double? _sensexLtp, _sensexPct;
 
-  double _sensexLtp = 81971.99;
-  double _sensexChange = -560.20;
-  double _sensexChangePct = -0.68;
+  Timer? _pollTimer;
+  StreamSubscription<Quote>? _tickSub;
+  StreamSubscription<IndexFeedState>? _stateSub;
+  BuildContext? _progressCtx;
+
+  static const Color _bg = Color(0xFF0D1117);
+  static const Color _card = Color(0xFF161B22);
+  static const Color _blue = Color(0xFF2962FF);
+  static const Color _green = Color(0xFF00C853);
+  static const Color _red = Color(0xFFE53935);
 
   @override
   void initState() {
     super.initState();
-    _loadWatchlists();
-    _startRealtimePolling();
-    _checkMorningAutoRefresh();
+    _setupFeedListeners();
+    _loadData();
+    _maybeAutoRefreshScrips();
+    _pollTimer = Timer.periodic(
+        const Duration(seconds: 3), (_) => _refreshQuotes());
   }
 
-  void _checkMorningAutoRefresh() {
-    // Auto-refresh once in the morning on first open of a new day
-    ScripMasterService.instance.checkAndAutoRefreshMorning(
-      onProgress: (msg) {
-        debugPrint('Morning auto-refresh: $msg');
-      },
-    );
+  @override
+  void didUpdateWidget(covariant WatchlistsScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isLoggedIn && !oldWidget.isLoggedIn) {
+      _connectIndexFeed();
+      _refreshQuotes();
+    }
+    if (!widget.isLoggedIn && oldWidget.isLoggedIn) {
+      _feed.disconnect();
+    }
   }
 
   @override
   void dispose() {
-    _realtimeTimer?.cancel();
+    _pollTimer?.cancel();
+    _tickSub?.cancel();
+    _stateSub?.cancel();
     super.dispose();
   }
 
-  void _startRealtimePolling() {
-    // Polls live data every 2 seconds for real-time updates
-    _realtimeTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      if (mounted) {
-        _fetchLiveQuotes();
-      }
-    });
-  }
+  // ---------------- Data ----------------
 
-  Future<void> _loadWatchlists() async {
-    setState(() => _isLoading = true);
-    final lists = await _db.getWatchlists();
+  Future<void> _loadData() async {
+    var lists = await _db.getWatchlists();
+    if (lists.isEmpty) {
+      await _db.createWatchlist(Watchlist(
+        name: 'Watchlist 1',
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+      ));
+      lists = await _db.getWatchlists();
+    }
+    _activeList ??= lists.first;
+    if (!lists.any((l) => l.id == _activeList!.id)) {
+      _activeList = lists.first;
+    }
+    final items = await _db.getItems(_activeList!.id!);
+    final scripCount = await _db.getScripsCount();
+    final lastTime = await _scripService.getLastRefreshTime();
     if (!mounted) return;
     setState(() {
       _watchlists = lists;
-      if (_activeWatchlistIndex >= _watchlists.length) {
-        _activeWatchlistIndex = _watchlists.isNotEmpty ? _watchlists.length - 1 : 0;
+      _items = items;
+      _isLoading = false;
+      _scripInfoText = scripCount > 0
+          ? 'Instruments: $scripCount${lastTime != null ? ' • Updated $lastTime' : ''}'
+          : 'No instruments yet — tap the download icon to fetch the stock list';
+    });
+    _connectIndexFeed();
+    _refreshQuotes();
+  }
+
+  Future<void> _refreshQuotes() async {
+    if (!mounted || _items.isEmpty) return;
+    final batch = await _api.getQuotesBatch(_items);
+    if (!mounted || batch.isEmpty) return;
+    setState(() {
+      for (final item in _items) {
+        if (item.id == null) continue;
+        final quote = (item.token != null ? batch[item.token!] : null) ??
+            batch['${item.exchange}|${item.symbol}'] ??
+            batch['${item.exchange}|${item.token}'];
+        if (quote != null) {
+          _quotes[item.id!] = quote;
+        }
       }
     });
+  }
 
-    if (_watchlists.isNotEmpty) {
-      await _loadActiveWatchlistItems();
-    } else {
+  // ---------------- Index feed ----------------
+
+  void _setupFeedListeners() {
+    _tickSub = _feed.ticks.listen((quote) {
       if (!mounted) return;
       setState(() {
-        _activeItems = [];
-        _isLoading = false;
-      });
-    }
-  }
-
-  Future<void> _loadActiveWatchlistItems() async {
-    if (_watchlists.isEmpty) return;
-    final activeList = _watchlists[_activeWatchlistIndex];
-    final items = await _db.getItems(activeList.id!);
-
-    // Requirement 5: Resolve tokens for legacy rows if token is null
-    final resolvedItems = <WatchItem>[];
-    for (final item in items) {
-      if (item.token == null || item.token!.trim().isEmpty) {
-        final lookedUp =
-            await _db.findTokenBySymbolAndSegment(item.symbol, item.exchange);
-        if (lookedUp != null && lookedUp.trim().isNotEmpty) {
-          if (item.id != null) {
-            await _db.updateItemToken(item.id!, lookedUp);
+        if (quote.token == '26000') {
+          _niftyLtp = quote.ltp;
+          _niftyPct = quote.changePct;
+        } else if (quote.token == '1') {
+          _sensexLtp = quote.ltp;
+          _sensexPct = quote.changePct;
+        }
+        for (final item in _items) {
+          if (item.isIndex && item.id != null && item.token == quote.token) {
+            _quotes[item.id!] = quote;
           }
-          resolvedItems.add(item.copyWith(token: lookedUp));
-          continue;
         }
-      }
-      resolvedItems.add(item);
-    }
-
-    if (mounted) {
-      setState(() {
-        _activeItems = resolvedItems;
-        _isLoading = false;
       });
-      _fetchLiveQuotes();
-    }
+    });
+    _stateSub = _feed.states.listen((s) {
+      if (!mounted) return;
+      setState(() => _feedConnected = s == IndexFeedState.connected);
+    });
   }
 
-  Future<void> _fetchLiveQuotes() async {
-    // Need at least access token to fetch quotes
-    if (_api.accessToken == null || _api.accessToken!.isEmpty) {
-      if (!_api.isLoggedIn) return;
-    }
-
-    // 1. Fetch live quotes for active items in ONE call (up to 50 instruments per batch)
-    final validItems = _activeItems
-        .where((it) => it.token != null && it.token!.trim().isNotEmpty)
-        .toList();
-
-    if (validItems.isNotEmpty) {
-      try {
-        final batchQuotes = await _api.getQuotesBatch(validItems);
-        if (mounted) {
-          setState(() {
-            _quotes.addAll(batchQuotes);
-          });
-        }
-      } catch (e) {
-        debugPrint('Realtime batch quote error: $e');
+  void _connectIndexFeed() {
+    if (!widget.isLoggedIn) return;
+    _feed.connect();
+    final keys = <String>['nse_cm|26000', 'bse_cm|1'];
+    for (final item in _items) {
+      if (item.isIndex && item.token != null && item.token!.isNotEmpty) {
+        keys.add(
+            '${KotakApi.normalizeSegment(item.exchange)}|${item.token}');
       }
     }
-
-    // 2. Fetch live quotes for top indices
-    try {
-      final niftyQuote = await _api.getQuote('NIFTY 50', 'nse_cm', token: '26000');
-      if (mounted) {
-        setState(() {
-          _niftyLtp = niftyQuote.ltp;
-          _niftyChange = niftyQuote.change;
-          _niftyChangePct = niftyQuote.changePct;
-        });
-      }
-    } catch (_) {}
-
-    try {
-      final sensexQuote = await _api.getQuote('SENSEX', 'bse_cm', token: '1');
-      if (mounted) {
-        setState(() {
-          _sensexLtp = sensexQuote.ltp;
-          _sensexChange = sensexQuote.change;
-          _sensexChangePct = sensexQuote.changePct;
-        });
-      }
-    } catch (_) {}
+    _feed.subscribe(keys);
   }
 
-  // --- Watchlist Management Dialogs ---
+  // ---------------- Scrip master ----------------
 
-  void _showManageWatchlistsSheet() {
-    showModalBottomSheet(
+  Future<void> _maybeAutoRefreshScrips() async {
+    // Silent first-open-of-the-day refresh (no dialogs).
+    _scripService.onProgress = null;
+    _scripService.onSuccess = (_) => _loadData();
+    _scripService.onError = null;
+    await _scripService.checkAndAutoRefreshMorning();
+  }
+
+  Future<void> _refreshScripsManual() async {
+    if (_scripService.isRefreshing) return;
+    final progress = ValueNotifier<String>('Starting download...');
+    showDialog(
       context: context,
-      backgroundColor: const Color(0xFF16191E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setSheetState) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Manage Watchlists',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                  TextButton.icon(
-                    icon: const Icon(Icons.add, size: 20),
-                    label: const Text('New List'),
-                    onPressed: () async {
-                      Navigator.pop(ctx);
-                      _showCreateListDialog();
-                    },
-                  ),
-                ],
-              ),
-              const Divider(color: Colors.white24),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 280),
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _watchlists.length,
-                  itemBuilder: (context, idx) {
-                    final wl = _watchlists[idx];
-                    return ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        wl.name,
-                        style: TextStyle(
-                          color: idx == _activeWatchlistIndex
-                              ? const Color(0xFF387ED1)
-                              : Colors.white,
-                          fontWeight: idx == _activeWatchlistIndex
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                        ),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.edit_outlined,
-                                size: 18, color: Colors.grey),
-                            onPressed: () {
-                              Navigator.pop(ctx);
-                              _showRenameDialog(wl);
-                            },
-                          ),
-                          if (_watchlists.length > 1)
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  size: 18, color: Colors.redAccent),
-                              onPressed: () {
-                                Navigator.pop(ctx);
-                                _confirmDeleteWatchlist(wl);
-                              },
-                            ),
-                        ],
-                      ),
-                      onTap: () {
-                        setState(() {
-                          _activeWatchlistIndex = idx;
-                        });
-                        Navigator.pop(ctx);
-                        _loadActiveWatchlistItems();
-                      },
-                    );
-                  },
+      barrierDismissible: false,
+      builder: (ctx) {
+        _progressCtx = ctx;
+        return AlertDialog(
+          backgroundColor: _card,
+          title: const Text('Updating instruments',
+              style: TextStyle(color: Colors.white, fontSize: 16)),
+          content: ValueListenableBuilder<String>(
+            valueListenable: progress,
+            builder: (context, value, child) => Row(
+              children: [
+                const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
-              ),
-            ],
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Text(value,
+                      style: const TextStyle(color: Colors.white70)),
+                ),
+              ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
+
+    _scripService.onProgress = (msg) => progress.value = msg;
+    _scripService.onSuccess = (counts) {
+      _closeProgress();
+      var total = 0;
+      counts.forEach((_, v) => total += v);
+      _snack('Instruments updated ($total rows)', green: true);
+      _loadData();
+    };
+    _scripService.onError = (msg) {
+      _closeProgress();
+      _snack(msg, green: false);
+    };
+    await _scripService.refreshScripMaster();
+    _closeProgress();
   }
 
-  Future<void> _showCreateListDialog() async {
-    final controller = TextEditingController();
-    await showDialog(
+  void _closeProgress() {
+    if (_progressCtx != null) {
+      Navigator.of(_progressCtx!).pop();
+      _progressCtx = null;
+    }
+  }
+
+  void _snack(String msg, {required bool green}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: green ? Colors.green.shade700 : Colors.red.shade700,
+      duration: const Duration(seconds: 3),
+    ));
+  }
+
+  // ---------------- Watchlist management ----------------
+
+  Future<void> _switchList(Watchlist list) async {
+    setState(() {
+      _activeList = list;
+      _quotes.clear();
+      _isLoading = true;
+    });
+    await _loadData();
+  }
+
+  Future<String?> _nameDialog(String title, String initial) {
+    final ctrl = TextEditingController(text: initial);
+    return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2228),
-        title: const Text('New Watchlist', style: TextStyle(color: Colors.white)),
+        backgroundColor: _card,
+        title: Text(title,
+            style: const TextStyle(color: Colors.white, fontSize: 16)),
         content: TextField(
-          controller: controller,
+          controller: ctrl,
           autofocus: true,
           style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            labelText: 'Watchlist Name',
-            hintText: 'e.g. Pharma, Banking',
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(hintText: 'List name'),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final name = controller.text.trim();
-              if (name.isEmpty) return;
-              await _db.createWatchlist(name);
-              if (ctx.mounted) Navigator.pop(ctx);
-              await _loadWatchlists();
-              setState(() {
-                _activeWatchlistIndex = _watchlists.length - 1;
-              });
-              _loadActiveWatchlistItems();
-            },
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _showRenameDialog(Watchlist list) async {
-    final controller = TextEditingController(text: list.name);
-    await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2228),
-        title: const Text('Rename Watchlist', style: TextStyle(color: Colors.white)),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          style: const TextStyle(color: Colors.white),
-          decoration: const InputDecoration(
-            labelText: 'New Name',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        actions: [
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final newName = controller.text.trim();
-              if (newName.isEmpty) return;
-              await _db.renameWatchlist(list.id!, newName);
-              if (ctx.mounted) Navigator.pop(ctx);
-              _loadWatchlists();
-            },
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: const Text('Save'),
           ),
         ],
@@ -345,678 +288,623 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
     );
   }
 
-  Future<void> _confirmDeleteWatchlist(Watchlist list) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E2228),
-        title: const Text('Delete Watchlist', style: TextStyle(color: Colors.white)),
-        content: Text(
-          'Delete "${list.name}" and all its stocks?',
-          style: const TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true && list.id != null) {
-      await _db.deleteWatchlist(list.id!);
-      _loadWatchlists();
-    }
-  }
-
-  Future<void> _deleteItem(WatchItem item) async {
-    if (item.id != null) {
-      await _db.removeItem(item.id!);
-      _loadActiveWatchlistItems();
-    }
-  }
-
-  void _openSearchScreen() async {
-    if (_watchlists.isEmpty) {
-      await _db.createWatchlist("India's Best");
-      await _loadWatchlists();
-    }
-    if (_watchlists.isEmpty || !mounted) return;
-    final activeList = _watchlists[_activeWatchlistIndex];
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => InstrumentSearchScreen(watchlist: activeList),
-      ),
-    );
-    if (!mounted) return;
-    _loadActiveWatchlistItems();
-  }
-
-  void _showStockDetailsSheet(WatchItem item, Quote? quote) {
+  void _showManageLists() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF16191E),
+      backgroundColor: _card,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        final ltp = quote != null ? quote.ltp : 0.0;
-        final chg = quote != null ? quote.change : 0.0;
-        final chgPct = quote != null ? quote.changePct : 0.0;
-        final isPositive = chg >= 0;
-        final color = isPositive ? const Color(0xFF00C853) : const Color(0xFFE53935);
-
-        return Padding(
-          padding: const EdgeInsets.all(20.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.symbol,
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      Text(
-                        item.displayName,
-                        style: TextStyle(fontSize: 12, color: Colors.grey.shade400),
-                      ),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        ltp > 0 ? ltp.toStringAsFixed(2) : '—',
-                        style: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.white,
-                        ),
-                      ),
-                      if (ltp > 0)
-                        Text(
-                          '${isPositive ? "+" : ""}${chg.toStringAsFixed(2)} (${isPositive ? "+" : ""}${chgPct.toStringAsFixed(2)}%)',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: color,
-                          ),
-                        ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const Divider(color: Colors.white24),
-              const SizedBox(height: 8),
-
-              // Market stats grid
-              if (quote != null) ...[
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    _buildStatCol('Open', quote.open.toStringAsFixed(2)),
-                    _buildStatCol('High', quote.high.toStringAsFixed(2)),
-                    _buildStatCol('Low', quote.low.toStringAsFixed(2)),
-                    _buildStatCol('Prev Close', quote.prevClose.toStringAsFixed(2)),
-                  ],
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              // Action Buttons: Buy / Sell (Paper) and Delete
-              Row(
-                children: [
-                  Expanded(
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFF387ED1),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('BUY ${item.symbol} registered'),
-                            backgroundColor: const Color(0xFF387ED1),
-                          ),
-                        );
-                      },
-                      child: const Text('BUY'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      style: FilledButton.styleFrom(
-                        backgroundColor: const Color(0xFFE53935),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onPressed: () {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('SELL ${item.symbol} registered'),
-                            backgroundColor: const Color(0xFFE53935),
-                          ),
-                        );
-                      },
-                      child: const Text('SELL'),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _deleteItem(item);
-                    },
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildStatCol(String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
-        const SizedBox(height: 2),
-        Text(value, style: const TextStyle(fontSize: 13, color: Colors.white)),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final activeWatchlist = _watchlists.isNotEmpty
-        ? _watchlists[_activeWatchlistIndex]
-        : null;
-
-    return Scaffold(
-      backgroundColor: const Color(0xFF0F1216),
-      body: SafeArea(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => SafeArea(
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // --- TOP MARKET INDICES HEADER (NIFTY & SENSEX) ---
-            Container(
-              padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-              color: const Color(0xFF0F1216),
-              child: Row(
-                children: [
-                  // NIFTY
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'NIFTY',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Text(
-                              _niftyLtp.toStringAsFixed(2),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                '${_niftyChange >= 0 ? "+" : ""}${_niftyChange.toStringAsFixed(2)} (${_niftyChangePct.toStringAsFixed(2)}%)',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: _niftyChange >= 0
-                                      ? const Color(0xFF00C853)
-                                      : const Color(0xFFE53935),
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // SENSEX
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'SENSEX',
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 0.5,
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Text(
-                              _sensexLtp.toStringAsFixed(2),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                '${_sensexChange >= 0 ? "+" : ""}${_sensexChange.toStringAsFixed(2)} (${_sensexChangePct.toStringAsFixed(2)}%)',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: _sensexChange >= 0
-                                      ? const Color(0xFF00C853)
-                                      : const Color(0xFFE53935),
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Down Chevron
-                  const Icon(
-                    Icons.keyboard_arrow_down,
-                    color: Color(0xFF387ED1),
-                    size: 22,
-                  ),
-                ],
-              ),
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('My Watchlists',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold)),
             ),
-
-            // --- WATCHLIST TABS (Horizontal Scrollable) ---
-            Container(
-              height: 44,
-              decoration: const BoxDecoration(
-                border: Border(
-                  bottom: BorderSide(color: Color(0xFF1E2228), width: 1),
-                ),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: _watchlists.isEmpty
-                        ? const SizedBox.shrink()
-                        : ListView.builder(
-                            scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.symmetric(horizontal: 16),
-                            itemCount: _watchlists.length,
-                            itemBuilder: (context, idx) {
-                              final isSelected = idx == _activeWatchlistIndex;
-                              final name = _watchlists[idx].name;
-
-                              return InkWell(
-                                onTap: () {
-                                  setState(() {
-                                    _activeWatchlistIndex = idx;
-                                  });
-                                  _loadActiveWatchlistItems();
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 14, vertical: 10),
-                                  decoration: BoxDecoration(
-                                    border: isSelected
-                                        ? const Border(
-                                            bottom: BorderSide(
-                                              color: Color(0xFF387ED1),
-                                              width: 2.5,
-                                            ),
-                                          )
-                                        : null,
-                                  ),
-                                  child: Center(
-                                    child: Text(
-                                      name,
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: isSelected
-                                            ? FontWeight.bold
-                                            : FontWeight.w500,
-                                        color: isSelected
-                                            ? const Color(0xFF387ED1)
-                                            : Colors.grey.shade400,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
+            ..._watchlists.map((list) => ListTile(
+                  title: Text(list.name,
+                      style: const TextStyle(color: Colors.white)),
+                  leading: Icon(
+                    list.id == _activeList?.id
+                        ? Icons.radio_button_checked
+                        : Icons.radio_button_unchecked,
+                    color: _blue,
+                    size: 20,
                   ),
-                  // Manage Watchlists Button (≡+)
-                  IconButton(
-                    icon: const Icon(
-                      Icons.playlist_add,
-                      color: Color(0xFF387ED1),
-                      size: 22,
-                    ),
-                    tooltip: 'Manage Watchlists',
-                    onPressed: _showManageWatchlistsSheet,
-                  ),
-                ],
-              ),
-            ),
-
-            // --- SEARCH & QUICK ACTION BAR ---
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(
-                children: [
-                  // Search & Add Bar
-                  Expanded(
-                    child: InkWell(
-                      onTap: _openSearchScreen,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Container(
-                        height: 42,
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF16191E),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: const Color(0xFF262B33),
-                            width: 1,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(Icons.search, size: 20, color: Colors.grey.shade400),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Search & add',
-                              style: TextStyle(
-                                color: Colors.grey.shade500,
-                                fontSize: 14,
-                              ),
-                            ),
-                          ],
-                        ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.edit,
+                            color: Colors.white54, size: 19),
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          final name =
+                              await _nameDialog('Rename watchlist', list.name);
+                          if (name != null && name.isNotEmpty) {
+                            await _db.updateWatchlist(Watchlist(
+                              id: list.id,
+                              name: name,
+                              createdAt: list.createdAt,
+                            ));
+                            _loadData();
+                          }
+                        },
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // Filter Button
-                  Container(
-                    height: 42,
-                    width: 42,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF16191E),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: const Color(0xFF262B33),
-                        width: 1,
-                      ),
-                    ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      icon: const Icon(Icons.filter_list,
-                          size: 20, color: Color(0xFF387ED1)),
-                      tooltip: 'Filter Stocks',
-                      onPressed: () {
-                        // Sort by Name, % Change, LTP
-                        setState(() {
-                          _activeItems.sort((a, b) => a.symbol.compareTo(b.symbol));
-                        });
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // Edit Button
-                  Container(
-                    height: 42,
-                    width: 42,
-                    decoration: BoxDecoration(
-                      color: _isEditMode
-                          ? const Color(0xFF387ED1).withAlpha(50)
-                          : const Color(0xFF16191E),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: _isEditMode
-                            ? const Color(0xFF387ED1)
-                            : const Color(0xFF262B33),
-                        width: 1,
-                      ),
-                    ),
-                    child: IconButton(
-                      padding: EdgeInsets.zero,
-                      icon: Icon(
-                        _isEditMode ? Icons.check : Icons.edit_outlined,
-                        size: 20,
-                        color: Colors.grey.shade400,
-                      ),
-                      tooltip: 'Edit Watchlist',
-                      onPressed: () {
-                        setState(() {
-                          _isEditMode = !_isEditMode;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // --- STOCK LIST ---
-            Expanded(
-              child: _isLoading
-                  ? const Center(
-                      child: CircularProgressIndicator(color: Color(0xFF387ED1)),
-                    )
-                  : _activeItems.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.candlestick_chart_outlined,
-                                  size: 48, color: Colors.grey.shade600),
-                              const SizedBox(height: 12),
-                              Text(
-                                'No stocks in ${activeWatchlist?.name ?? "this list"}',
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: const Color(0xFF387ED1),
-                                ),
-                                onPressed: _openSearchScreen,
-                                icon: const Icon(Icons.add, size: 18),
-                                label: const Text('Add Stocks'),
-                              ),
-                            ],
-                          ),
-                        )
-                      : RefreshIndicator(
-                          color: const Color(0xFF387ED1),
-                          backgroundColor: const Color(0xFF16191E),
-                          onRefresh: () async {
-                            await _loadActiveWatchlistItems();
+                      if (_watchlists.length > 1)
+                        IconButton(
+                          icon: const Icon(Icons.delete,
+                              color: Colors.redAccent, size: 19),
+                          onPressed: () async {
+                            Navigator.pop(ctx);
+                            await _db.deleteWatchlist(list.id!);
+                            if (_activeList?.id == list.id) {
+                              _activeList = null;
+                            }
+                            _loadData();
                           },
-                          child: ListView.separated(
-                            itemCount: _activeItems.length,
-                            separatorBuilder: (context, index) => const Divider(
-                              height: 1,
-                              color: Color(0xFF1E2228),
-                            ),
-                            itemBuilder: (context, index) {
-                              final item = _activeItems[index];
-                              final hasToken =
-                                  item.token != null && item.token!.trim().isNotEmpty;
-                              final quote = (hasToken ? _quotes[item.token!] : null) ??
-                                  _quotes['${item.exchange}|${item.symbol}'] ??
-                                  _quotes['${item.exchange}|${item.token}'];
-
-                              final ltpStr = quote != null
-                                  ? quote.ltp.toStringAsFixed(2)
-                                  : '—';
-                              final changeVal = quote != null ? quote.change : 0.0;
-                              final changePctVal =
-                                  quote != null ? quote.changePct : 0.0;
-                              final isPositive = changeVal >= 0;
-                              final changeColor = isPositive
-                                  ? const Color(0xFF00C853)
-                                  : const Color(0xFFE53935);
-
-                              final changeStr = quote != null
-                                  ? '${changeVal >= 0 ? "+" : ""}${changeVal.toStringAsFixed(2)} (${changePctVal >= 0 ? "+" : ""}${changePctVal.toStringAsFixed(2)}%)'
-                                  : '—';
-
-                              return InkWell(
-                                onTap: () => _showStockDetailsSheet(item, quote),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 14,
-                                  ),
-                                  child: Row(
-                                    mainAxisAlignment:
-                                        MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      // Left: Symbol & Exchange
-                                      Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            item.symbol,
-                                            style: const TextStyle(
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 15,
-                                              color: Colors.white,
-                                              letterSpacing: 0.3,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 3),
-                                          Text(
-                                            _buildExchangeSubtitle(item),
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.grey.shade500,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-
-                                      // Right: LTP & Change, Missing Token Notice, or Delete in edit mode
-                                      if (_isEditMode)
-                                        IconButton(
-                                          icon: const Icon(
-                                            Icons.remove_circle_outline,
-                                            color: Colors.redAccent,
-                                            size: 22,
-                                          ),
-                                          onPressed: () => _deleteItem(item),
-                                        )
-                                      else if (!hasToken)
-                                        const Flexible(
-                                          child: Text(
-                                            'Token missing — re-add this stock from search',
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Color(0xFFFFB300),
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                            textAlign: TextAlign.end,
-                                          ),
-                                        )
-                                      else
-                                        Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.end,
-                                          children: [
-                                            Text(
-                                              ltpStr,
-                                              style: const TextStyle(
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 15,
-                                                color: Colors.white,
-                                              ),
-                                            ),
-                                            const SizedBox(height: 3),
-                                            Text(
-                                              changeStr,
-                                              style: TextStyle(
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.w600,
-                                                color: changeColor,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
                         ),
+                    ],
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _switchList(list);
+                  },
+                )),
+            ListTile(
+              leading: const Icon(Icons.add_circle, color: _blue),
+              title: const Text('New Watchlist',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final name = await _nameDialog('New watchlist', '');
+                if (name != null && name.isNotEmpty) {
+                  final id = await _db.createWatchlist(Watchlist(
+                    name: name,
+                    createdAt: DateTime.now().millisecondsSinceEpoch,
+                  ));
+                  final lists = await _db.getWatchlists();
+                  final created =
+                      lists.firstWhere((l) => l.id == id, orElse: () => lists.last);
+                  await _switchList(created);
+                }
+              },
             ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
     );
   }
 
-  String _buildExchangeSubtitle(WatchItem item) {
-    if (item.instrumentType == 'CE' || item.instrumentType == 'PE') {
-      final strikeStr = item.strike != null ? item.strike!.toStringAsFixed(0) : '';
-      return '${item.exchange == "nse_fo" ? "NSE" : item.exchange} $strikeStr ${item.instrumentType}';
+  // ---------------- Item detail + paper trade ----------------
+
+  void _showItemSheet(WatchItem item) {
+    final quote = item.id != null ? _quotes[item.id!] : null;
+    final isDeriv = item.instrumentType == 'FUT' ||
+        item.instrumentType == 'CE' ||
+        item.instrumentType == 'PE';
+    final step = isDeriv ? (item.lotSize ?? 1) : 1;
+    var qty = step;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: _card,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.symbol,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold)),
+                        Text(item.displayName,
+                            style: const TextStyle(
+                                color: Colors.white54, fontSize: 12),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis),
+                      ],
+                    ),
+                  ),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.withAlpha(40),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Text('PAPER',
+                        style: TextStyle(
+                            color: Colors.orange,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              if (quote != null) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('₹${quote.ltp.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold)),
+                    Text(
+                      '${quote.change >= 0 ? '+' : ''}${quote.change.toStringAsFixed(2)} (${quote.changePct >= 0 ? '+' : ''}${quote.changePct.toStringAsFixed(2)}%)',
+                      style: TextStyle(
+                          color: quote.change >= 0 ? _green : _red,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                _ohlcRow('Open', quote.open),
+                _ohlcRow('High', quote.high),
+                _ohlcRow('Low', quote.low),
+                _ohlcRow('Prev Close', quote.prevClose),
+                _ohlcRow('Volume', quote.volume.toDouble(), isVolume: true),
+              ] else
+                const Text('Live price not loaded yet',
+                    style: TextStyle(color: Colors.white54)),
+              const SizedBox(height: 18),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Quantity',
+                      style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.remove_circle_outline,
+                            color: Colors.white70),
+                        onPressed: () {
+                          if (qty > step) setSheet(() => qty -= step);
+                        },
+                      ),
+                      Text('$qty',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline,
+                            color: Colors.white70),
+                        onPressed: () => setSheet(() => qty += step),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          _paperTrade(item, 'B', qty, quote, ctx),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _green,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('BUY (Paper)',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          _paperTrade(item, 'S', qty, quote, ctx),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _red,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('SELL (Paper)',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Center(
+                child: Text('Paper trade only — no real order goes to Kotak',
+                    style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _ohlcRow(String label, double value, {bool isVolume = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          Text(
+            isVolume
+                ? value.toInt().toString()
+                : '₹${value.toStringAsFixed(2)}',
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _paperTrade(WatchItem item, String side, int qty,
+      Quote? quote, BuildContext sheetCtx) async {
+    var price = quote?.ltp ?? 0;
+    if (price <= 0) {
+      // One fresh fetch before giving up.
+      final fresh = await _api.getQuotesBatch([item]);
+      final freshQuote = (item.token != null ? fresh[item.token!] : null) ??
+          fresh['${item.exchange}|${item.symbol}'] ??
+          fresh['${item.exchange}|${item.token}'];
+      if (freshQuote != null) {
+        price = freshQuote.ltp;
+      }
     }
-    if (item.instrumentType == 'FUT') {
-      return '${item.exchange == "nse_fo" ? "NSE" : item.exchange} FUT';
+    final error = side == 'B'
+        ? await PaperBroker.instance.buy(item: item, qty: qty, price: price)
+        : await PaperBroker.instance.sell(item: item, qty: qty, price: price);
+    if (!mounted) return;
+    if (sheetCtx.mounted) {
+      Navigator.of(sheetCtx).pop();
     }
-    if (item.exchange == 'nse_cm') return 'NSE';
-    if (item.exchange == 'bse_cm') return 'BSE';
-    if (item.exchange == 'mcx_fo') return 'MCX';
-    return item.exchange.toUpperCase();
+    if (error != null) {
+      _snack(error, green: false);
+    } else {
+      _snack(
+          'Paper ${side == 'B' ? 'BUY' : 'SELL'} $qty ${item.symbol} @ ₹${price.toStringAsFixed(2)} — see Practice tab',
+          green: true);
+    }
+  }
+
+  // ---------------- Build ----------------
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _bg,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildHeader(),
+            _buildTabsRow(),
+            _buildSearchBar(),
+            if (_scripInfoText != null)
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(_scripInfoText!,
+                      style: const TextStyle(
+                          color: Colors.white38, fontSize: 11)),
+                ),
+              ),
+            const Divider(color: Colors.white10, height: 12),
+            Expanded(child: _buildList()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text('HJDev Trading',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 19,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(width: 8),
+              Container(
+                width: 9,
+                height: 9,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _feedConnected ? _green : Colors.white24,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(_feedConnected ? 'Live' : 'Index feed off',
+                  style:
+                      const TextStyle(color: Colors.white38, fontSize: 11)),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Download today\'s stock list (scrip master)',
+                icon: const Icon(Icons.cloud_download_outlined,
+                    color: Colors.white70, size: 22),
+                onPressed: _refreshScripsManual,
+              ),
+              IconButton(
+                tooltip: 'Logout',
+                icon: const Icon(Icons.logout,
+                    color: Colors.white54, size: 21),
+                onPressed: () => widget.onLogout(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                  child: _indexCard('NIFTY', _niftyLtp, _niftyPct)),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: _indexCard('SENSEX', _sensexLtp, _sensexPct)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _indexCard(String name, double? ltp, double? pct) {
+    final up = (pct ?? 0) >= 0;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white10),
+      ),
+      child: Row(
+        children: [
+          Text(name,
+              style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600)),
+          const Spacer(),
+          Text(ltp != null ? ltp.toStringAsFixed(2) : '—',
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(width: 6),
+          Text(
+            pct != null
+                ? '${up ? '+' : ''}${pct.toStringAsFixed(2)}%'
+                : '',
+            style: TextStyle(
+                color: up ? _green : _red,
+                fontSize: 11,
+                fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTabsRow() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 8, 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: _watchlists.map((list) {
+                  final active = list.id == _activeList?.id;
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(list.name),
+                      selected: active,
+                      onSelected: (_) => _switchList(list),
+                      selectedColor: _blue,
+                      backgroundColor: _card,
+                      labelStyle: TextStyle(
+                          color: active ? Colors.white : Colors.white70,
+                          fontSize: 13),
+                      side: BorderSide.none,
+                    ),
+                  );
+                }).toList(),
+              ),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: _showManageLists,
+            icon: const Icon(Icons.list, size: 18, color: _blue),
+            label: const Text('Lists',
+                style: TextStyle(color: _blue, fontSize: 13)),
+          ),
+          IconButton(
+            icon: Icon(_isEditMode ? Icons.check : Icons.edit_outlined,
+                color: Colors.white54, size: 19),
+            onPressed: () => setState(() => _isEditMode = !_isEditMode),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSearchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 4),
+      child: InkWell(
+        onTap: () async {
+          if (_activeList == null) return;
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InstrumentSearchScreen(
+                watchlistId: _activeList!.id!,
+                watchlistName: _activeList!.name,
+              ),
+            ),
+          );
+          _loadData();
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: _card,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.search, color: Colors.white38, size: 19),
+              SizedBox(width: 10),
+              Text('Search stocks, futures, options...',
+                  style: TextStyle(color: Colors.white38, fontSize: 13)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildList() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_items.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Text(
+            'This watchlist is empty.\nTap the search bar to add stocks, futures or options from the downloaded list.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white38, fontSize: 14),
+          ),
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _refreshQuotes,
+      child: ListView.separated(
+        itemCount: _items.length,
+        separatorBuilder: (context, index) =>
+            const Divider(color: Colors.white10, height: 1, indent: 16),
+        itemBuilder: (ctx, i) {
+          final item = _items[i];
+          final quote = item.id != null ? _quotes[item.id!] : null;
+          return _buildRow(item, quote);
+        },
+      ),
+    );
+  }
+
+  Widget _buildRow(WatchItem item, Quote? quote) {
+    final up = (quote?.change ?? 0) >= 0;
+    return ListTile(
+      onTap: () => _showItemSheet(item),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(item.symbol,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis),
+          ),
+          if (item.instrumentType != null && item.instrumentType != 'EQ') ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: _blue.withAlpha(50),
+                borderRadius: BorderRadius.circular(3),
+              ),
+              child: Text(item.instrumentType!,
+                  style: const TextStyle(color: _blue, fontSize: 10)),
+            ),
+          ],
+        ],
+      ),
+      subtitle: Text(
+        item.instrumentType == 'FUT' ||
+                item.instrumentType == 'CE' ||
+                item.instrumentType == 'PE'
+            ? '${item.expiry ?? ''}${item.strike != null ? ' • Strike ${item.strike!.toStringAsFixed(0)}' : ''}'
+            : item.displayName,
+        style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                quote != null ? quote.ltp.toStringAsFixed(2) : '—',
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600),
+              ),
+              Text(
+                quote != null
+                    ? '${up ? '+' : ''}${quote.changePct.toStringAsFixed(2)}%'
+                    : '',
+                style: TextStyle(
+                    color: up ? _green : _red, fontSize: 11.5),
+              ),
+            ],
+          ),
+          if (_isEditMode)
+            IconButton(
+              icon: const Icon(Icons.delete, color: Colors.redAccent),
+              onPressed: () async {
+                if (item.id != null) {
+                  await _db.deleteItem(item.id!);
+                  _loadData();
+                }
+              },
+            ),
+        ],
+      ),
+    );
   }
 }

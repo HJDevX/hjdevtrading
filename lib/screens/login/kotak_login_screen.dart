@@ -1,551 +1,374 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
 
+/// Kotak Neo login — the official 2-step flow:
+///  Step A: Access Token + Mobile + UCC + TOTP  -> view token + sid
+///  Step B: MPIN                                  -> session for the day
+///
+/// The profile (token / mobile / UCC) is saved once in secure storage.
+/// TOTP and MPIN are NEVER saved. A successful session is kept for the
+/// rest of the day (IST) and restored automatically on app start.
 class KotakLoginScreen extends StatefulWidget {
   final VoidCallback? onLoginSuccess;
+  final VoidCallback? onLogout;
 
-  const KotakLoginScreen({super.key, this.onLoginSuccess});
+  const KotakLoginScreen({super.key, this.onLoginSuccess, this.onLogout});
 
   @override
   State<KotakLoginScreen> createState() => _KotakLoginScreenState();
 }
 
 class _KotakLoginScreenState extends State<KotakLoginScreen> {
-  final KotakApi _api = KotakApi.instance;
+  final _api = KotakApi.instance;
 
-  // Controllers
-  final TextEditingController _accessTokenController = TextEditingController();
-  final TextEditingController _mobileController = TextEditingController();
-  final TextEditingController _uccController = TextEditingController();
-  final TextEditingController _totpController = TextEditingController();
-  final TextEditingController _mpinController = TextEditingController();
+  final _tokenCtrl = TextEditingController();
+  final _mobileCtrl = TextEditingController();
+  final _uccCtrl = TextEditingController();
+  final _totpCtrl = TextEditingController();
+  final _mpinCtrl = TextEditingController();
 
-  // State
-  int _stage = 1; // 1 = Step A (TOTP), 2 = Step B (MPIN)
-  bool _isLoading = false;
-  String? _errorMessage;
-  bool _obscureAccessToken = true;
-  bool _obscureMpin = true;
+  bool _loadingProfile = true;
+  bool _isVerifyingTotp = false;
+  bool _isLoggingIn = false;
+  bool _showMpinField = false;
+  bool _isLoggedIn = false;
+  String? _viewToken;
+  String? _viewSid;
+  String? _greetingName;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadSavedProfile();
-    KotakApi.sessionExpiredNotifier.addListener(_onSessionExpired);
+    _loadProfile();
   }
 
   @override
   void dispose() {
-    KotakApi.sessionExpiredNotifier.removeListener(_onSessionExpired);
-    _accessTokenController.dispose();
-    _mobileController.dispose();
-    _uccController.dispose();
-    _totpController.dispose();
-    _mpinController.dispose();
+    _tokenCtrl.dispose();
+    _mobileCtrl.dispose();
+    _uccCtrl.dispose();
+    _totpCtrl.dispose();
+    _mpinCtrl.dispose();
     super.dispose();
   }
 
-  void _onSessionExpired() {
-    final msg = KotakApi.sessionExpiredNotifier.value;
-    if (msg != null && mounted) {
-      _api.logout();
-      setState(() {
-        _stage = 1;
-        _errorMessage = msg;
-        _totpController.clear();
-        _mpinController.clear();
-      });
-    }
+  Future<void> _loadProfile() async {
+    await _api.loadSavedProfile();
+    if (!mounted) return;
+    setState(() {
+      _tokenCtrl.text = _api.accessToken ?? '';
+      _mobileCtrl.text = _api.mobileNumber ?? '';
+      _uccCtrl.text = _api.ucc ?? '';
+      _isLoggedIn = _api.isLoggedIn;
+      _greetingName = _api.greetingName;
+      _loadingProfile = false;
+    });
   }
 
-  Future<void> _loadSavedProfile() async {
-    final profile = await _api.loadSavedProfile();
-    if (mounted) {
-      setState(() {
-        if (profile['accessToken']?.isNotEmpty ?? false) {
-          _accessTokenController.text = profile['accessToken']!;
-        }
-        if (profile['mobileNumber']?.isNotEmpty ?? false) {
-          _mobileController.text = profile['mobileNumber']!;
-        } else {
-          _mobileController.text = '+91';
-        }
-        if (profile['ucc']?.isNotEmpty ?? false) {
-          _uccController.text = profile['ucc']!;
-        }
-        // TOTP and MPIN always start blank
-        _totpController.clear();
-        _mpinController.clear();
-      });
-    }
-  }
+  Future<void> _handleVerifyTotp() async {
+    final token = _tokenCtrl.text.trim();
+    final mobile = _mobileCtrl.text.trim();
+    final ucc = _uccCtrl.text.trim();
+    final totp = _totpCtrl.text.trim();
 
-  // --- Step 1: Verify TOTP ---
-  Future<void> _handleStep1() async {
-    final token = _accessTokenController.text.trim();
-    final mobile = _mobileController.text.trim();
-    final ucc = _uccController.text.trim().toUpperCase();
-    final totp = _totpController.text.trim();
-
-    if (token.isEmpty || mobile.isEmpty || ucc.isEmpty || totp.isEmpty) {
-      setState(() {
-        _errorMessage = 'Please fill in all fields (Token, Mobile, UCC, TOTP).';
-      });
+    if (token.isEmpty || mobile.isEmpty || ucc.isEmpty) {
+      setState(() => _error = 'Please fill Access Token, Mobile and UCC');
       return;
     }
-
     if (totp.length != 6) {
-      setState(() {
-        _errorMessage = 'TOTP must be exactly 6 digits.';
-      });
+      setState(() => _error = 'TOTP must be 6 digits (from your Kotak Neo app)');
       return;
     }
 
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _isVerifyingTotp = true;
+      _error = null;
     });
 
     try {
-      // 1. Save token, mobile, ucc to secure storage
       await _api.saveProfile(
-        accessToken: token,
-        mobileNumber: mobile,
-        ucc: ucc,
-      );
+          accessToken: token, mobileNumber: mobile, ucc: ucc);
+      final res = await _api.tradeApiLogin(totp: totp);
+      final data = res['data'] as Map<String, dynamic>?;
+      final viewToken = data?['token']?.toString();
+      final viewSid = data?['sid']?.toString();
 
-      // 2. Call Login Step A
-      await _api.tradeApiLogin(
-        accessToken: token,
-        mobileNumber: mobile,
-        ucc: ucc,
-        totp: totp,
-      );
-
-      if (mounted) {
-        setState(() {
-          _stage = 2; // Transition to Stage 2
-          _isLoading = false;
-          _errorMessage = null;
-          _mpinController.clear();
-        });
+      if (viewToken == null || viewSid == null) {
+        throw Exception('Token or SID missing in Kotak response');
       }
+      if (!mounted) return;
+      setState(() {
+        _viewToken = viewToken;
+        _viewSid = viewSid;
+        _showMpinField = true;
+        _isVerifyingTotp = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('TOTP verified — now enter your MPIN')),
+      );
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = e.toString();
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _isVerifyingTotp = false;
+      });
     }
   }
 
-  // --- Step 2: Login with MPIN ---
-  Future<void> _handleStep2() async {
-    final mpin = _mpinController.text.trim();
-
-    if (mpin.isEmpty) {
-      setState(() {
-        _errorMessage = 'Please enter your 6-digit MPIN.';
-      });
+  Future<void> _handleLogin() async {
+    final mpin = _mpinCtrl.text.trim();
+    if (mpin.length < 4) {
+      setState(() => _error = 'Please enter your MPIN');
       return;
     }
-
-    if (mpin.length != 6) {
-      setState(() {
-        _errorMessage = 'MPIN must be exactly 6 digits.';
-      });
+    if (_viewToken == null || _viewSid == null) {
+      setState(() => _error = 'Please verify TOTP first');
       return;
     }
 
     setState(() {
-      _isLoading = true;
-      _errorMessage = null;
+      _isLoggingIn = true;
+      _error = null;
     });
 
     try {
-      await _api.tradeApiValidate(mpin: mpin);
-
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = null;
-          _totpController.clear();
-          _mpinController.clear();
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Logged in successfully!'),
-            backgroundColor: Colors.green,
-            duration: Duration(seconds: 2),
-          ),
-        );
-
-        // Switch to Watchlists tab
-        widget.onLoginSuccess?.call();
+      await _api.tradeApiValidate(
+        viewToken: _viewToken!,
+        viewSid: _viewSid!,
+        mpin: mpin,
+      );
+      if (!_api.isLoggedIn) {
+        throw Exception('Session not created — please try again');
       }
+      if (!mounted) return;
+      setState(() {
+        _isLoggedIn = true;
+        _greetingName = _api.greetingName;
+        _isLoggingIn = false;
+        _showMpinField = false;
+        _mpinCtrl.clear();
+        _totpCtrl.clear();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_greetingName != null
+              ? 'Welcome, $_greetingName'
+              : 'Logged in successfully'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+      widget.onLoginSuccess?.call();
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-          _errorMessage = e.toString();
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceAll('Exception: ', '');
+        _isLoggingIn = false;
+      });
     }
   }
 
   Future<void> _handleLogout() async {
-    await _api.deleteSavedSession();
-    if (mounted) {
-      setState(() {
-        _stage = 1;
-        _totpController.clear();
-        _mpinController.clear();
-        _errorMessage = null;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Logged out of Kotak Neo.')),
-      );
-    }
+    widget.onLogout?.call();
+    if (!mounted) return;
+    setState(() {
+      _isLoggedIn = false;
+      _greetingName = null;
+      _showMpinField = false;
+      _viewToken = null;
+      _viewSid = null;
+    });
   }
 
-  Widget _buildSessionDetailRow(String label, String value) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(
-          label,
-          style: TextStyle(fontSize: 13, color: Colors.grey.shade400),
-        ),
-        Text(
-          value,
-          style: const TextStyle(
-            fontSize: 13,
-            color: Colors.white,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+  InputDecoration _dec(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, size: 20),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      filled: true,
+      fillColor: const Color(0xFF161B22),
+      contentPadding:
+          const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final isLoggedIn = _api.isLoggedIn;
+    if (_loadingProfile) {
+      return const Scaffold(
+          body: Center(child: CircularProgressIndicator()));
+    }
 
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Kotak Neo Login',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // When user is logged in, show active session & profile details ONLY (no Step 1 / Step 2 inputs)
-            if (isLoggedIn) ...[
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF14171C),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF1E2228)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.green.withAlpha(30),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.check_circle,
-                            color: Color(0xFF00C853),
-                            size: 28,
-                          ),
-                        ),
-                        const SizedBox(width: 14),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                _api.greetingName?.isNotEmpty == true
-                                    ? _api.greetingName!
-                                    : 'Logged In',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              const Text(
-                                'Active Trading Session (Today)',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Color(0xFF00C853),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    const Divider(color: Color(0xFF1E2228)),
-                    const SizedBox(height: 14),
-                    _buildSessionDetailRow('Client Code (UCC)', _api.ucc ?? '-'),
-                    const SizedBox(height: 10),
-                    _buildSessionDetailRow('Mobile Number', _api.mobileNumber ?? '-'),
-                    const SizedBox(height: 10),
-                    _buildSessionDetailRow('Session Date (IST)', _api.loginDate ?? '-'),
-                    const SizedBox(height: 24),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: Colors.redAccent,
-                          side: const BorderSide(color: Colors.redAccent),
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        onPressed: _handleLogout,
-                        icon: const Icon(Icons.logout, size: 18),
-                        label: const Text(
-                          'Logout',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            if (_isLoggedIn) _buildLoggedInCard(),
+            if (!_isLoggedIn) ...[
+              const Text(
+                'Step A — Profile + TOTP',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold),
               ),
-            ] else ...[
-              // Stage Header (Only shown when NOT logged in)
-              Text(
-                _stage == 1 ? 'Step 1: Neo Trade API Credentials' : 'Step 2: Enter MPIN',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                _stage == 1
-                    ? 'Access Token, Mobile, and UCC will be saved securely. Enter daily TOTP.'
-                    : 'Enter your 6-digit MPIN to complete the session login.',
-                style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
-              ),
-              const SizedBox(height: 20),
-
-              // --- STAGE 1 FIELDS ---
-              if (_stage == 1) ...[
-              // Access Token
-              TextField(
-                controller: _accessTokenController,
-                obscureText: _obscureAccessToken,
-                decoration: InputDecoration(
-                  labelText: 'Access Token *',
-                  hintText: 'Enter Kotak Neo Access Token',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.key_outlined),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscureAccessToken
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _obscureAccessToken = !_obscureAccessToken;
-                      });
-                    },
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // Mobile Number
-              TextField(
-                controller: _mobileController,
-                keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
-                  labelText: 'Mobile Number *',
-                  hintText: '+91XXXXXXXXXX',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.phone_android_outlined),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // UCC (Client Code)
-              TextField(
-                controller: _uccController,
-                textCapitalization: TextCapitalization.characters,
-                decoration: const InputDecoration(
-                  labelText: 'UCC (Client Code) *',
-                  hintText: 'e.g. AB1234',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.badge_outlined),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // TOTP
-              TextField(
-                controller: _totpController,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: 'Daily TOTP (6 Digits) *',
-                  hintText: '123456',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.lock_clock_outlined),
-                  counterText: '',
-                ),
-              ),
-              const SizedBox(height: 20),
-
-              // Button Step 1
-              FilledButton(
-                onPressed: _isLoading ? null : _handleStep1,
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                ),
-                child: _isLoading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text(
-                        'Step 1 — Verify TOTP',
-                        style: TextStyle(fontSize: 16),
-                      ),
-              ),
-            ],
-
-            // --- STAGE 2 FIELDS ---
-            if (_stage == 2) ...[
-              // Summary chip of verified credentials
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle_outline,
-                        color: Colors.green, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Verified ${_uccController.text} (${_mobileController.text})',
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        setState(() {
-                          _stage = 1;
-                          _errorMessage = null;
-                        });
-                      },
-                      child: const Text('Edit'),
-                    ),
-                  ],
-                ),
+              const SizedBox(height: 4),
+              const Text(
+                'Profile is saved once on this phone. TOTP and MPIN are never saved.',
+                style: TextStyle(color: Colors.white54, fontSize: 12),
               ),
               const SizedBox(height: 16),
-
-              // MPIN
               TextField(
-                controller: _mpinController,
-                obscureText: _obscureMpin,
+                controller: _tokenCtrl,
+                decoration: _dec('Kotak Access Token', Icons.key),
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _mobileCtrl,
+                decoration: _dec('Mobile Number (+91...)', Icons.phone),
+                keyboardType: TextInputType.phone,
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _uccCtrl,
+                decoration: _dec('UCC (Client Code)', Icons.badge),
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _totpCtrl,
+                decoration: _dec('TOTP (6 digits)', Icons.pin),
                 keyboardType: TextInputType.number,
                 maxLength: 6,
-                autofocus: true,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: InputDecoration(
-                  labelText: 'MPIN (6 Digits) *',
-                  hintText: '******',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.password_outlined),
-                  counterText: '',
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscureMpin
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined,
-                    ),
-                    onPressed: () {
-                      setState(() {
-                        _obscureMpin = !_obscureMpin;
-                      });
-                    },
-                  ),
-                ),
+                style: const TextStyle(color: Colors.white),
               ),
-              const SizedBox(height: 20),
-
-              // Button Step 2
-              FilledButton(
-                onPressed: _isLoading ? null : _handleStep2,
-                style: FilledButton.styleFrom(
-                  backgroundColor: Colors.green.shade700,
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: _isVerifyingTotp ? null : _handleVerifyTotp,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2962FF),
                   padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
                 ),
-                child: _isLoading
+                child: _isVerifyingTotp
                     ? const SizedBox(
                         height: 20,
                         width: 20,
                         child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Text(
-                        'Step 2 — Login',
-                        style: TextStyle(fontSize: 16),
-                      ),
+                            color: Colors.white, strokeWidth: 2))
+                    : const Text('Verify TOTP',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold)),
               ),
-            ],
-          ],
-
-            // Red error text under button
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 18),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      _errorMessage!,
-                      style: const TextStyle(
-                        color: Colors.red,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
+              if (_showMpinField) ...[
+                const SizedBox(height: 24),
+                const Text(
+                  'Step B — MPIN',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _mpinCtrl,
+                  decoration: _dec('MPIN', Icons.lock),
+                  keyboardType: TextInputType.number,
+                  obscureText: true,
+                  style: const TextStyle(color: Colors.white),
+                ),
+                const SizedBox(height: 12),
+                ElevatedButton(
+                  onPressed: _isLoggingIn ? null : _handleLogin,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade700,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
                   ),
-                ],
+                  child: _isLoggingIn
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2))
+                      : const Text('Login',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withAlpha(30),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.withAlpha(90)),
+                ),
+                child: Text(_error!,
+                    style: const TextStyle(color: Colors.redAccent)),
               ),
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildLoggedInCard() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF161B22),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.green.withAlpha(90)),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.check_circle, color: Colors.green, size: 44),
+          const SizedBox(height: 10),
+          Text(
+            _greetingName != null ? 'Welcome, $_greetingName' : 'Logged in',
+            style: const TextStyle(
+                color: Colors.white,
+                fontSize: 17,
+                fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Session stays active for today. Tomorrow, login again with a fresh TOTP + MPIN.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton.icon(
+            onPressed: _handleLogout,
+            icon: const Icon(Icons.logout, size: 18),
+            label: const Text('Logout'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.redAccent,
+              side: const BorderSide(color: Colors.redAccent),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            ),
+          ),
+        ],
       ),
     );
   }

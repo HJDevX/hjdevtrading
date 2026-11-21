@@ -1,3 +1,5 @@
+/// One row of the Kotak scrip master (the market's full instrument list),
+/// as stored in the local `scrips` table after a Refresh download.
 class Scrip {
   final int? id;
   final String token;
@@ -5,7 +7,7 @@ class Scrip {
   final String displayName;
   final String segment; // nse_cm, bse_cm, nse_fo, mcx_fo
   final String exchange; // NSE, BSE, MCX
-  final String instrumentType; // EQ, FUT, CE, PE
+  final String instrumentType; // EQ, FUT, CE, PE, INDEX
   final String? underlying;
   final String? expiry;
   final double? strike;
@@ -41,9 +43,7 @@ class Scrip {
       'lot_size': lotSize,
       'tick_size': tickSize,
     };
-    if (id != null) {
-      map['id'] = id;
-    }
+    if (id != null) map['id'] = id;
     return map;
   }
 
@@ -60,7 +60,8 @@ class Scrip {
       expiry: map['expiry']?.toString(),
       strike: map['strike'] != null ? (map['strike'] as num).toDouble() : null,
       lotSize: map['lot_size'] != null ? (map['lot_size'] as num).toInt() : null,
-      tickSize: map['tick_size'] != null ? (map['tick_size'] as num).toDouble() : null,
+      tickSize:
+          map['tick_size'] != null ? (map['tick_size'] as num).toDouble() : null,
     );
   }
 }

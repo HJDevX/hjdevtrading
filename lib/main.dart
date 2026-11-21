@@ -1,43 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:hjdev_trading/screens/home_screen.dart';
-import 'package:hjdev_trading/utils/app_sizes.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  runApp(const MyApp());
+  runApp(const HJDevTradingApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class HJDevTradingApp extends StatelessWidget {
+  const HJDevTradingApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'HJDev Trading',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0F1216),
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF387ED1),
-          surface: Color(0xFF16191E),
-        ),
-      ),
       theme: ThemeData(
-        useMaterial3: true,
         brightness: Brightness.dark,
-        scaffoldBackgroundColor: const Color(0xFF0F1216),
+        scaffoldBackgroundColor: const Color(0xFF0D1117),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF387ED1),
-          surface: Color(0xFF16191E),
+          primary: Color(0xFF2962FF),
+          surface: Color(0xFF161B22),
         ),
+        appBarTheme: const AppBarTheme(
+          backgroundColor: Color(0xFF0D1117),
+          elevation: 0,
+        ),
+        useMaterial3: true,
       ),
-      builder: (context, child) {
-        AppSizes.init(context);
-        return child ?? const SizedBox.shrink();
-      },
       home: const HomeScreen(),
     );
   }

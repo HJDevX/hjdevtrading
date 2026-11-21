@@ -3,20 +3,11 @@ class Watchlist {
   final String name;
   final int createdAt;
 
-  Watchlist({
-    this.id,
-    required this.name,
-    required this.createdAt,
-  });
+  Watchlist({this.id, required this.name, required this.createdAt});
 
   Map<String, dynamic> toMap() {
-    final map = <String, dynamic>{
-      'name': name,
-      'created_at': createdAt,
-    };
-    if (id != null) {
-      map['id'] = id;
-    }
+    final map = <String, dynamic>{'name': name, 'created_at': createdAt};
+    if (id != null) map['id'] = id;
     return map;
   }
 
@@ -33,10 +24,13 @@ class WatchItem {
   final int? id;
   final int watchlistId;
   final String symbol;
+
+  /// Segment string (nse_cm, bse_cm, nse_fo, mcx_fo) — the field is named
+  /// "exchange" for historical reasons, it always holds a Kotak segment.
   final String exchange;
   final String? token;
   final String displayName;
-  final String? instrumentType; // EQ / FUT / CE / PE
+  final String? instrumentType; // EQ / FUT / CE / PE / INDEX
   final String? expiry;
   final double? strike;
   final int? lotSize;
@@ -66,9 +60,7 @@ class WatchItem {
       'strike': strike,
       'lot_size': lotSize,
     };
-    if (id != null) {
-      map['id'] = id;
-    }
+    if (id != null) map['id'] = id;
     return map;
   }
 
@@ -78,13 +70,32 @@ class WatchItem {
       watchlistId: map['watchlist_id'] as int,
       symbol: map['symbol'] as String,
       exchange: map['exchange'] as String? ?? 'nse_cm',
-      token: map['token'] as String?,
+      token: map['token']?.toString(),
       displayName: map['display_name'] as String,
       instrumentType: map['instrument_type'] as String?,
       expiry: map['expiry'] as String?,
       strike: map['strike'] != null ? (map['strike'] as num).toDouble() : null,
       lotSize: map['lot_size'] != null ? (map['lot_size'] as num).toInt() : null,
     );
+  }
+
+  /// Indices are NOT served by the REST quotes API — they come only from
+  /// the WebSocket index feed. This getter is how the rest of the app
+  /// keeps the two apart.
+  bool get isIndex {
+    if (instrumentType?.toUpperCase() == 'INDEX') return true;
+    final sym = symbol.toUpperCase().trim();
+    if (sym == 'NIFTY 50' ||
+        sym == 'NIFTY' ||
+        sym == 'SENSEX' ||
+        sym == 'BANKNIFTY' ||
+        sym == 'NIFTY BANK') {
+      return true;
+    }
+    if (displayName.toUpperCase().contains('INDEX')) return true;
+    // Well-known index tokens: 26000 = NIFTY, 26009 = BANKNIFTY, 1 = SENSEX.
+    if (token == '26000' || token == '26009' || token == '1') return true;
+    return false;
   }
 
   WatchItem copyWith({
