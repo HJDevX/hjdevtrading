@@ -3,12 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:hjdev_trading/db/app_db.dart';
 import 'package:hjdev_trading/models/paper.dart';
 import 'package:hjdev_trading/models/quote.dart';
+import 'package:hjdev_trading/models/watchlist.dart';
+import 'package:hjdev_trading/screens/practice/simulator_screen.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
 import 'package:hjdev_trading/services/paper_broker.dart';
 
 /// PRACTICE page — paper trading only.
 ///  Tab 1: Orders    — every paper order placed from the watchlist
 ///  Tab 2: Portfolio — current paper holdings with live P&L and exit
+/// The flask icon in the app bar opens the SIMULATOR — a separate
+/// practice market on fake prices, for when the real market is closed.
 class PracticeScreen extends StatelessWidget {
   const PracticeScreen({super.key});
 
@@ -35,6 +39,18 @@ class PracticeScreen extends StatelessWidget {
               ),
             ],
           ),
+          actions: [
+            IconButton(
+              tooltip: 'Simulator — practice on fake moving prices',
+              icon: const Icon(Icons.science_outlined),
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (_) => const SimulatorScreen()),
+                );
+              },
+            ),
+          ],
           bottom: const TabBar(
             indicatorColor: Color(0xFF2962FF),
             labelColor: Colors.white,
@@ -135,7 +151,7 @@ class _OrdersTabState extends State<_OrdersTab>
       onRefresh: _load,
       child: ListView.separated(
         itemCount: _orders.length + 1,
-        separatorBuilder: (context, index) =>
+        separatorBuilder: (_, __) =>
             const Divider(color: Colors.white10, height: 1, indent: 16),
         itemBuilder: (ctx, i) {
           if (i == 0) {
@@ -313,7 +329,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
       onRefresh: _load,
       child: ListView.separated(
         itemCount: _positions.length + 1,
-        separatorBuilder: (context, index) =>
+        separatorBuilder: (_, __) =>
             const Divider(color: Colors.white10, height: 1, indent: 16),
         itemBuilder: (ctx, i) {
           if (i == 0) {

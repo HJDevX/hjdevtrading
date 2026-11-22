@@ -12,6 +12,8 @@ import 'package:hjdev_trading/models/watchlist.dart';
 ///  - scrips                    : Kotak's full instrument list (Refresh)
 ///  - paper_orders              : practice orders placed from watchlist
 ///  - paper_positions           : practice holdings
+///  - sim_orders / sim_positions: SIMULATOR trades (fake prices) — kept
+///    fully separate from the real paper record
 class AppDb {
   static final AppDb instance = AppDb._init();
   static Database? _database;
@@ -30,7 +32,7 @@ class AppDb {
 
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -40,6 +42,7 @@ class AppDb {
     await _createCoreTables(db);
     await _createScripsTable(db);
     await _createPaperTables(db);
+    await _createSimTables(db);
   }
 
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -62,6 +65,9 @@ class AppDb {
     }
     if (oldVersion < 3) {
       await _createPaperTables(db);
+    }
+    if (oldVersion < 4) {
+      await _createSimTables(db);
     }
   }
 
@@ -351,5 +357,100 @@ class AppDb {
     final db = await instance.database;
     return await db
         .delete('paper_positions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------- Simulator trading ----------------
+  // Same shapes as the paper tables (PaperOrder / PaperPosition are
+  // reused as the row models), different tables — sim trades can
+  // never mix into the real paper record.
+
+  Future<void> _createSimTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sim_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        exchange TEXT NOT NULL DEFAULT 'nse_cm',
+        token TEXT,
+        display_name TEXT,
+        instrument_type TEXT,
+        side TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        price REAL NOT NULL,
+        realized_pnl REAL NOT NULL DEFAULT 0,
+        time_ms INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sim_positions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        exchange TEXT NOT NULL DEFAULT 'nse_cm',
+        token TEXT,
+        display_name TEXT,
+        instrument_type TEXT,
+        lot_size INTEGER,
+        qty INTEGER NOT NULL,
+        avg_price REAL NOT NULL
+      )
+    ''');
+  }
+
+  Future<int> insertSimOrder(PaperOrder order) async {
+    final db = await instance.database;
+    return await db.insert('sim_orders', order.toMap());
+  }
+
+  Future<List<PaperOrder>> getSimOrders() async {
+    final db = await instance.database;
+    final result =
+        await db.query('sim_orders', orderBy: 'time_ms DESC, id DESC');
+    return result.map((json) => PaperOrder.fromMap(json)).toList();
+  }
+
+  Future<List<PaperPosition>> getSimPositions() async {
+    final db = await instance.database;
+    final result = await db.query('sim_positions', orderBy: 'symbol ASC');
+    return result.map((json) => PaperPosition.fromMap(json)).toList();
+  }
+
+  Future<PaperPosition?> getSimPosition(
+      String symbol, String exchange, String? token) async {
+    final db = await instance.database;
+    final result = await db.query(
+      'sim_positions',
+      where: token != null
+          ? 'symbol = ? AND exchange = ? AND token = ?'
+          : 'symbol = ? AND exchange = ?',
+      whereArgs:
+          token != null ? [symbol, exchange, token] : [symbol, exchange],
+      limit: 1,
+    );
+    if (result.isEmpty) return null;
+    return PaperPosition.fromMap(result.first);
+  }
+
+  Future<int> upsertSimPosition(PaperPosition position) async {
+    final db = await instance.database;
+    if (position.id == null) {
+      return await db.insert('sim_positions', position.toMap());
+    }
+    return await db.update(
+      'sim_positions',
+      position.toMap(),
+      where: 'id = ?',
+      whereArgs: [position.id],
+    );
+  }
+
+  Future<int> deleteSimPosition(int id) async {
+    final db = await instance.database;
+    return await db.delete('sim_positions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Wipe every simulator order and position (the Simulator's Reset).
+  Future<void> clearSimData() async {
+    final db = await instance.database;
+    await db.delete('sim_orders');
+    await db.delete('sim_positions');
   }
 }
