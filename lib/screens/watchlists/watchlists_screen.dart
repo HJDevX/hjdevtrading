@@ -10,9 +10,15 @@ import 'package:hjdev_trading/services/paper_broker.dart';
 import 'package:hjdev_trading/services/scrip_master_service.dart';
 
 /// Main watchlist screen: NIFTY/SENSEX header (live index feed), multiple
-/// watchlists, prices by REST batch poll, tap a row for details and
-/// PAPER buy/sell. Instruments come only from the downloaded scrip
-/// master — no stock name is hardcoded anywhere in this app.
+/// watchlists, tap a row for details and PAPER buy/sell. Instruments
+/// come only from the downloaded scrip master — no stock name is
+/// hardcoded anywhere in this app.
+///
+/// Prices (Step 9): while the feed socket is live, rows update by PUSH
+/// (subscribeScripsLite Mini ticks merged over the last REST quote);
+/// the 3-second REST batch poll runs only as the fallback when the
+/// feed is down, plus one forced fetch whenever the list changes so
+/// OHLC/volume are present.
 class WatchlistsScreen extends StatefulWidget {
   final bool isLoggedIn;
   final VoidCallback onLogout;
@@ -116,10 +122,15 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
           : 'No instruments yet — tap the download icon to fetch the stock list';
     });
     _connectIndexFeed();
-    _refreshQuotes();
+    _syncFeedSubscriptions();
+    _refreshQuotes(force: true);
   }
 
-  Future<void> _refreshQuotes() async {
+  Future<void> _refreshQuotes({bool force = false}) async {
+    // While the feed is live, rows update by push — skip the REST poll
+    // (it remains the fallback when the feed is down, and a forced
+    // fetch still runs when the list changes, for OHLC/volume).
+    if (_feedConnected && !force) return;
     if (!mounted || _items.isEmpty) return;
     final batch = await _api.getQuotesBatch(_items);
     if (!mounted || batch.isEmpty) return;
@@ -139,20 +150,44 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   // ---------------- Index feed ----------------
 
   void _setupFeedListeners() {
+    // The state stream is broadcast — if the feed connected before
+    // this screen listened, seed the flag from the current state.
+    _feedConnected = _feed.state == IndexFeedState.connected;
     _tickSub = _feed.ticks.listen((quote) {
       if (!mounted) return;
       setState(() {
-        if (quote.token == '26000') {
+        if (quote.token == '26000' && quote.exchange == 'nse_cm') {
           _niftyLtp = quote.ltp;
           _niftyPct = quote.changePct;
-        } else if (quote.token == '1') {
+        } else if (quote.token == '1' && quote.exchange == 'bse_cm') {
           _sensexLtp = quote.ltp;
           _sensexPct = quote.changePct;
         }
+        // Rows: match on token AND segment (tokens repeat across
+        // segments). A Mini tick carries only LTP + change, so merge
+        // it over the last REST quote to keep OHLC/volume on screen.
         for (final item in _items) {
-          if (item.isIndex && item.id != null && item.token == quote.token) {
-            _quotes[item.id!] = quote;
+          if (item.id == null || item.token == null) continue;
+          if (item.token != quote.token) continue;
+          if (KotakApi.normalizeSegment(item.exchange) != quote.exchange) {
+            continue;
           }
+          final old = _quotes[item.id!];
+          _quotes[item.id!] = old == null
+              ? quote
+              : Quote(
+                  symbol: old.symbol,
+                  exchange: old.exchange,
+                  token: old.token,
+                  ltp: quote.ltp,
+                  open: old.open,
+                  high: old.high,
+                  low: old.low,
+                  prevClose:
+                      old.prevClose > 0 ? old.prevClose : quote.prevClose,
+                  volume: old.volume,
+                  changePct: quote.changePct,
+                );
         }
       });
     });
@@ -160,6 +195,18 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
       if (!mounted) return;
       setState(() => _feedConnected = s == IndexFeedState.connected);
     });
+  }
+
+  /// Keep the feed's scrip subscriptions equal to the visible list's
+  /// non-index items (indices ride their own subscribeIndices event).
+  void _syncFeedSubscriptions() {
+    final keys = <String>[];
+    for (final item in _items) {
+      if (item.isIndex) continue;
+      if (item.token == null || item.token!.isEmpty) continue;
+      keys.add('${KotakApi.normalizeSegment(item.exchange)}|${item.token}');
+    }
+    _feed.syncScrips(keys);
   }
 
   void _connectIndexFeed() {
@@ -824,7 +871,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
       );
     }
     return RefreshIndicator(
-      onRefresh: _refreshQuotes,
+      onRefresh: () => _refreshQuotes(force: true),
       child: ListView.separated(
         itemCount: _items.length,
         separatorBuilder: (context, index) =>

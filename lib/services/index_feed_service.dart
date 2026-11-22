@@ -15,8 +15,12 @@ enum IndexFeedState {
   error,
 }
 
-/// Live INDEX prices (NIFTY, SENSEX, BANKNIFTY) from Kotak's market-data
-/// WebSocket — the ONLY source for indices (REST quotes rejects them).
+/// Live prices from Kotak's market-data WebSocket (SFeed):
+///  - INDICES (NIFTY, SENSEX, BANKNIFTY) — the ONLY source for them
+///    (REST quotes rejects indices)
+///  - SCRIPS (Step 9) — watchlist stocks/F&O via subscribeScripsLite:
+///    push updates the moment a trade happens, replacing the old
+///    3-second REST polling while the socket is live
 ///
 /// Built strictly from Kotak's official "Market Data WebSocket —
 /// Developer Guide":
@@ -30,6 +34,9 @@ enum IndexFeedState {
 ///  - Indices subscribe with event "subscribeIndices", inputtoken
 ///    "nse_cm|26000"; index packets are message_code 7207, 87 bytes,
 ///    little-endian, prices = raw / divider
+///  - Scrips subscribe with "subscribeScripsLite"; their packets share
+///    message_code 7208 with the full Market Picture — route by the
+///    LEVEL byte (level 1 = Mini Touch Line, 54 bytes, guide s.7.4)
 ///
 /// CRASH-SAFETY DESIGN (this service must never take the app down):
 ///  - every callback is stamped with a generation number; a stale
@@ -65,6 +72,11 @@ class IndexFeedService {
   bool _tokenAuthWorked = false;
 
   final Set<String> _keys = <String>{};
+
+  /// Scrip keys ("segment|token") subscribed via subscribeScripsLite.
+  final Set<String> _scripKeys = <String>{};
+
+  bool _loggedFirstMini = false;
 
   /// Price dividers by numeric exchange code (guide section 9).
   final Map<int, double> _dividers = <int, double>{};
@@ -150,6 +162,33 @@ class IndexFeedService {
     }
     if (added && _state == IndexFeedState.connected) {
       _sendSubscriptions();
+    }
+  }
+
+  /// Make the scrip (Mini Touch Line) subscriptions exactly match
+  /// [keys] — the watchlist calls this whenever its items change.
+  /// Additions are snapshot+subscribed, removals unsubscribed; when
+  /// the socket is down the set is simply remembered and sent after
+  /// the next successful auth (the server forgets everything on
+  /// disconnect, guide s.8).
+  void syncScrips(List<String> keys) {
+    final desired = keys
+        .map((k) => k.trim())
+        .where((k) => k.isNotEmpty)
+        .toSet();
+    final added = desired.difference(_scripKeys);
+    final removed = _scripKeys.difference(desired);
+    _scripKeys
+      ..removeAll(removed)
+      ..addAll(added);
+    if (_state != IndexFeedState.connected) return;
+    if (removed.isNotEmpty) {
+      _sendFrame('unsubscribeScripsLite', removed.join(','));
+    }
+    if (added.isNotEmpty) {
+      _sendFrame('snapshotScripsLite', added.join(','));
+      _sendFrame('subscribeScripsLite', added.join(','));
+      debugPrint('IndexFeed: subscribed scrips (lite): ${added.join(',')}');
     }
   }
 
@@ -295,18 +334,30 @@ class IndexFeedService {
     });
   }
 
-  void _sendSubscriptions() {
+  void _sendFrame(String event, String inputtoken) {
     final channel = _channel;
-    if (channel == null || _keys.isEmpty) return;
-    final joined = _keys.join(',');
-    for (final event in ['snapshotIndices', 'subscribeIndices']) {
-      try {
-        channel.sink.add(jsonEncode({'event': event, 'inputtoken': joined}));
-      } catch (e) {
-        debugPrint('IndexFeed: subscribe send failed: $e');
-      }
+    if (channel == null) return;
+    try {
+      channel.sink.add(jsonEncode({'event': event, 'inputtoken': inputtoken}));
+    } catch (e) {
+      debugPrint('IndexFeed: send $event failed: $e');
     }
-    debugPrint('IndexFeed: subscribed indices: $joined');
+  }
+
+  void _sendSubscriptions() {
+    if (_channel == null) return;
+    if (_keys.isNotEmpty) {
+      final joined = _keys.join(',');
+      _sendFrame('snapshotIndices', joined);
+      _sendFrame('subscribeIndices', joined);
+      debugPrint('IndexFeed: subscribed indices: $joined');
+    }
+    if (_scripKeys.isNotEmpty) {
+      final joined = _scripKeys.join(',');
+      _sendFrame('snapshotScripsLite', joined);
+      _sendFrame('subscribeScripsLite', joined);
+      debugPrint('IndexFeed: subscribed scrips (lite): $joined');
+    }
   }
 
   // ---------------- Message handling ----------------
@@ -433,8 +484,24 @@ class IndexFeedService {
         packet.offsetInBytes, packet.length);
     final messageCode = bd.getUint16(2, Endian.little);
     final exchangeId = bd.getInt8(4);
+    final level = bd.getUint8(5);
 
-    if (messageCode != 7207) return; // only index packets here
+    // Routing order per guide s.6.2: index (7207) first, then market
+    // status / CAS (105/104, ignored), then by the LEVEL byte — the
+    // Mini Touch Line and the full Market Picture BOTH arrive as
+    // message_code 7208, only the level tells them apart.
+    if (messageCode == 7207) {
+      _decodeIndexPacket(bd, packet, exchangeId);
+    } else if (messageCode == 105 || messageCode == 104) {
+      // Market status / CAS reference — not prices, ignore.
+      return;
+    } else if (level == 1) {
+      _decodeMiniPacket(bd, exchangeId);
+    }
+    // Level 2/4/8 = full Market Picture — we never subscribe to it.
+  }
+
+  void _decodeIndexPacket(ByteData bd, Uint8List packet, int exchangeId) {
     if (packet.length < 53) return; // need values through net_chg_percent
 
     final divider = _dividers[exchangeId] ?? 100.0;
@@ -476,6 +543,45 @@ class IndexFeedService {
       prevClose: prevClose,
       volume: 0,
       changePct: pctRaw / 100.0,
+    );
+    if (!_ticksController.isClosed) _ticksController.add(quote);
+  }
+
+  /// Mini Touch Line — message_code 7208, level 1, 54 bytes (guide
+  /// s.7.4): token u32 @9, last_traded_price u32 @21 / divider,
+  /// net_chg_percent i32 @37 / 100, net_chg i32 @41 / divider.
+  ///
+  /// The packet's own close_price (@33) is documented as "used as-is,
+  /// NOT divided" — but the guide's worked example only reconciles
+  /// (ltp - net_chg = prev close) if the previous close is derived
+  /// from the two unambiguous fields, so that is what we do. The Mini
+  /// packet carries no OHLC/day-volume; the watchlist merges each
+  /// tick over the last REST quote so those stay on screen.
+  void _decodeMiniPacket(ByteData bd, int exchangeId) {
+    if (bd.lengthInBytes < 54) return;
+    final divider = _dividers[exchangeId] ?? 100.0;
+    final token = bd.getUint32(9, Endian.little);
+    final ltp = bd.getUint32(21, Endian.little) / divider;
+    final pct = bd.getInt32(37, Endian.little) / 100.0;
+    final netChg = bd.getInt32(41, Endian.little) / divider;
+    final prevClose = ltp - netChg;
+    if (ltp <= 0) return;
+    if (!_loggedFirstMini) {
+      _loggedFirstMini = true;
+      debugPrint(
+          'IndexFeed: MINI token=$token ltp=$ltp chg%=$pct (first scrip packet)');
+    }
+    final quote = Quote(
+      symbol: token.toString(),
+      exchange: _segmentByCode[exchangeId] ?? 'nse_cm',
+      token: token.toString(),
+      ltp: ltp,
+      open: prevClose,
+      high: prevClose,
+      low: prevClose,
+      prevClose: prevClose,
+      volume: 0,
+      changePct: pct,
     );
     if (!_ticksController.isClosed) _ticksController.add(quote);
   }
