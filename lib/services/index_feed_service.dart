@@ -62,6 +62,8 @@ class IndexFeedService {
   WebSocketChannel? _channel;
   StreamSubscription<dynamic>? _subscription;
   Timer? _reconnectTimer;
+  Timer? _heartbeatTimer;
+  bool _loggedFirstFrame = false;
 
   int _generation = 0;
   bool _manualClose = false;
@@ -137,12 +139,26 @@ class IndexFeedService {
     _triedTokenAuth = _tokenAuthWorked;
     _generation++;
     _setState(IndexFeedState.connecting);
+    _startHeartbeat();
     _openChannel(_generation);
+  }
+
+  /// Freeze detective: while the app runs, this prints every 10s. If
+  /// the app ever freezes again, the log tells us where: heartbeats
+  /// still printing = the Dart side is alive and the stall is on the
+  /// platform side; heartbeats stopped = the Dart side itself stuck,
+  /// and the last breadcrumb before them names the step it died in.
+  void _startHeartbeat() {
+    _heartbeatTimer?.cancel();
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      debugPrint('IndexFeed: heartbeat (state=$_state)');
+    });
   }
 
   void disconnect() {
     _manualClose = true;
     _generation++;
+    _heartbeatTimer?.cancel();
     _reconnectTimer?.cancel();
     _cleanupChannel();
     _retryCount = 0;
@@ -205,6 +221,8 @@ class IndexFeedService {
     }
 
     try {
+      debugPrint('IndexFeed: opening socket...');
+      _loggedFirstFrame = false;
       final channel = WebSocketChannel.connect(Uri.parse(_wsUrl(feedUrl)));
       _channel = channel;
       _subscription = channel.stream.listen(
@@ -364,6 +382,11 @@ class IndexFeedService {
 
   void _onMessage(dynamic message) {
     try {
+      if (!_loggedFirstFrame) {
+        _loggedFirstFrame = true;
+        debugPrint(
+            'IndexFeed: first frame on this socket (${message is String ? 'text' : 'binary'})');
+      }
       if (message is String) {
         _handleTextMessage(message);
       } else if (message is List<int>) {

@@ -58,6 +58,13 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   StreamSubscription<IndexFeedState>? _stateSub;
   BuildContext? _progressCtx;
 
+  // Incoming feed ticks are batched and applied in ONE rebuild per
+  // 100 ms — a reconnect snapshot can deliver every subscribed
+  // instrument in a single burst, and one setState per tick would
+  // rebuild the list dozens of times back-to-back on the UI thread.
+  final List<Quote> _pendingTicks = [];
+  Timer? _tickFlushTimer;
+
   static const Color _bg = Color(0xFF0D1117);
   static const Color _card = Color(0xFF161B22);
   static const Color _blue = Color(0xFF2962FF);
@@ -89,6 +96,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   @override
   void dispose() {
     _pollTimer?.cancel();
+    _tickFlushTimer?.cancel();
     _tickSub?.cancel();
     _stateSub?.cancel();
     super.dispose();
@@ -154,8 +162,24 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
     // this screen listened, seed the flag from the current state.
     _feedConnected = _feed.state == IndexFeedState.connected;
     _tickSub = _feed.ticks.listen((quote) {
+      _pendingTicks.add(quote);
+      _tickFlushTimer ??=
+          Timer(const Duration(milliseconds: 100), _flushTicks);
+    });
+    _stateSub = _feed.states.listen((s) {
       if (!mounted) return;
-      setState(() {
+      setState(() => _feedConnected = s == IndexFeedState.connected);
+    });
+  }
+
+  /// Apply all ticks collected in the last 100 ms in a single rebuild.
+  void _flushTicks() {
+    _tickFlushTimer = null;
+    if (!mounted || _pendingTicks.isEmpty) return;
+    final ticks = List<Quote>.from(_pendingTicks);
+    _pendingTicks.clear();
+    setState(() {
+      for (final quote in ticks) {
         if (quote.token == '26000' && quote.exchange == 'nse_cm') {
           _niftyLtp = quote.ltp;
           _niftyPct = quote.changePct;
@@ -189,11 +213,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                   changePct: quote.changePct,
                 );
         }
-      });
-    });
-    _stateSub = _feed.states.listen((s) {
-      if (!mounted) return;
-      setState(() => _feedConnected = s == IndexFeedState.connected);
+      }
     });
   }
 
