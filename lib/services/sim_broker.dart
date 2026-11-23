@@ -9,6 +9,12 @@
 ///  - PRICE:  fill when the replay price touches the chosen price,
 ///            filled AT that price (like a limit order)
 ///
+/// A BUY order can also carry a TARGET — a price, or a % above the
+/// fill. The moment the buy fills, a linked TARGET sell order is
+/// armed for the same qty; when the replay price reaches the target
+/// it sells automatically. Target orders appear in the active list
+/// and can be modified or cancelled like any other order.
+///
 /// Active orders can be modified (qty / trigger price / trigger
 /// time) or cancelled before they fire. Fills follow the app's usual
 /// paper rules: buys average in, sells need holdings and book
@@ -17,7 +23,7 @@ class SimOrder {
   final int id;
   String side; // 'B' or 'S'
   int qty;
-  String triggerType; // 'MARKET' | 'TIME' | 'PRICE'
+  String triggerType; // 'MARKET' | 'TIME' | 'PRICE' | 'TARGET'
   double? triggerPrice;
   int? triggerTimeMs;
   String status; // 'ACTIVE' | 'EXECUTED' | 'CANCELLED' | 'FAILED'
@@ -25,6 +31,15 @@ class SimOrder {
   int? fillTimeMs;
   double realizedPnl;
   String? note;
+
+  /// Target chosen on a BUY order: an exact price, or a % above the
+  /// fill price. When the buy fills, a TARGET sell is armed from
+  /// these (see [parentId] on the armed order).
+  double? targetPrice;
+  double? targetPct;
+
+  /// On an armed TARGET order: the id of the BUY order that made it.
+  int? parentId;
 
   SimOrder({
     required this.id,
@@ -38,10 +53,15 @@ class SimOrder {
     this.fillTimeMs,
     this.realizedPnl = 0,
     this.note,
+    this.targetPrice,
+    this.targetPct,
+    this.parentId,
   });
 
   bool get isBuy => side == 'B';
   bool get isActive => status == 'ACTIVE';
+
+  bool get hasTarget => targetPrice != null || targetPct != null;
 
   String get triggerText {
     switch (triggerType) {
@@ -49,6 +69,8 @@ class SimOrder {
         return 'at time';
       case 'PRICE':
         return 'at ₹${triggerPrice?.toStringAsFixed(2) ?? '—'}';
+      case 'TARGET':
+        return 'target ₹${triggerPrice?.toStringAsFixed(2) ?? '—'}';
       default:
         return 'market';
     }
@@ -64,12 +86,18 @@ class OrderDraft {
   double? triggerPrice;
   int? triggerTimeMs;
 
+  /// Optional target on a BUY: exact price, or % above the fill.
+  double? targetPrice;
+  double? targetPct;
+
   OrderDraft({
     required this.side,
     required this.qty,
     required this.triggerType,
     this.triggerPrice,
     this.triggerTimeMs,
+    this.targetPrice,
+    this.targetPct,
   });
 }
 
@@ -108,6 +136,9 @@ class SimBroker {
     required String triggerType,
     double? triggerPrice,
     int? triggerTimeMs,
+    double? targetPrice,
+    double? targetPct,
+    int? parentId,
   }) {
     final order = SimOrder(
       id: _nextId++,
@@ -116,6 +147,9 @@ class SimBroker {
       triggerType: triggerType,
       triggerPrice: triggerPrice,
       triggerTimeMs: triggerTimeMs,
+      targetPrice: targetPrice,
+      targetPct: targetPct,
+      parentId: parentId,
     );
     orders.add(order);
     return order;
@@ -128,6 +162,8 @@ class SimBroker {
       triggerType: draft.triggerType,
       triggerPrice: draft.triggerPrice,
       triggerTimeMs: draft.triggerTimeMs,
+      targetPrice: draft.targetPrice,
+      targetPct: draft.targetPct,
     );
   }
 
@@ -139,14 +175,15 @@ class SimBroker {
     return _applyFill(order, price, timeMs);
   }
 
-  /// Fire any TIME / PRICE orders whose trigger the latest engine
-  /// step crossed. Called by the replay screen on every step.
+  /// Fire any TIME / PRICE / TARGET orders whose trigger the latest
+  /// engine step crossed. Called by the replay screen on every step.
+  /// Iterates a copy: a filling BUY may arm a new TARGET order.
   void checkTriggers({
     required double prevPrice,
     required double price,
     required int timeMs,
   }) {
-    for (final order in orders) {
+    for (final order in List<SimOrder>.of(orders)) {
       if (!order.isActive) continue;
       if (order.triggerType == 'TIME' && order.triggerTimeMs != null) {
         if (timeMs >= order.triggerTimeMs!) {
@@ -160,6 +197,12 @@ class SimBroker {
             price == tp;
         if (crossed) {
           _applyFill(order, tp, timeMs);
+        }
+      } else if (order.triggerType == 'TARGET' &&
+          order.triggerPrice != null) {
+        // A target sells when the price RISES to it.
+        if (price >= order.triggerPrice!) {
+          _applyFill(order, order.triggerPrice!, timeMs);
         }
       }
     }
@@ -191,7 +234,27 @@ class SimBroker {
     order.status = 'EXECUTED';
     order.fillPrice = price;
     order.fillTimeMs = timeMs;
+    if (order.isBuy && order.hasTarget) {
+      _armTarget(order, price);
+    }
     return null;
+  }
+
+  /// Arm the automatic target sell for a filled BUY: same qty, at
+  /// the chosen target price (or fill + target %).
+  void _armTarget(SimOrder buyOrder, double fillPrice) {
+    final tp = buyOrder.targetPrice ??
+        (buyOrder.targetPct != null
+            ? fillPrice * (1 + buyOrder.targetPct! / 100)
+            : null);
+    if (tp == null || tp <= 0) return;
+    place(
+      side: 'S',
+      qty: buyOrder.qty,
+      triggerType: 'TARGET',
+      triggerPrice: double.parse(tp.toStringAsFixed(2)),
+      parentId: buyOrder.id,
+    );
   }
 
   void cancel(int orderId) {
@@ -201,13 +264,17 @@ class SimBroker {
     }
   }
 
-  /// Modify an ACTIVE order's qty and/or trigger. Returns an error
-  /// message, or null on success.
+  /// Modify an ACTIVE order's qty and/or trigger — and, for a BUY
+  /// that has not filled yet, its target. Returns an error message,
+  /// or null on success. Pass [clearTarget] to remove a buy's target.
   String? modify(
     int orderId, {
     int? qty,
     double? triggerPrice,
     int? triggerTimeMs,
+    double? targetPrice,
+    double? targetPct,
+    bool clearTarget = false,
   }) {
     final order = _byId(orderId);
     if (order == null) return 'Order not found';
@@ -222,6 +289,20 @@ class SimBroker {
     }
     if (triggerTimeMs != null) {
       order.triggerTimeMs = triggerTimeMs;
+    }
+    if (clearTarget) {
+      order.targetPrice = null;
+      order.targetPct = null;
+    }
+    if (targetPrice != null) {
+      if (targetPrice <= 0) return 'Target price must be more than 0';
+      order.targetPrice = targetPrice;
+      order.targetPct = null;
+    }
+    if (targetPct != null) {
+      if (targetPct <= 0) return 'Target % must be more than 0';
+      order.targetPct = targetPct;
+      order.targetPrice = null;
     }
     return null;
   }

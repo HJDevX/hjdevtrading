@@ -48,20 +48,33 @@ class _DraftRow {
   double? triggerPrice;
   TimeOfDay? triggerTime;
 
+  /// Optional target on a BUY: exact price, or % above the fill.
+  double? targetPrice;
+  double? targetPct;
+
   String describe(DateTime date) {
     final sideText = side == 'B' ? 'BUY' : 'SELL';
+    String base;
     switch (triggerType) {
       case 'TIME':
         final t = triggerTime;
         final when = t == null
             ? ''
             : ' at ${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-        return '$sideText $qty$when (time — any price)';
+        base = '$sideText $qty$when (time — any price)';
+        break;
       case 'PRICE':
-        return '$sideText $qty at ₹${triggerPrice?.toStringAsFixed(2) ?? '—'} (when price reaches it)';
+        base = '$sideText $qty at ₹${triggerPrice?.toStringAsFixed(2) ?? '—'} (when price reaches it)';
+        break;
       default:
-        return '$sideText $qty at market (start price)';
+        base = '$sideText $qty at market (start price)';
     }
+    if (side == 'B' && targetPrice != null) {
+      base += ' → target ₹${targetPrice!.toStringAsFixed(2)}';
+    } else if (side == 'B' && targetPct != null) {
+      base += ' → target +${targetPct!.toStringAsFixed(1)}%';
+    }
+    return base;
   }
 }
 
@@ -178,6 +191,8 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
           triggerType: d.triggerType,
           triggerPrice: d.triggerPrice,
           triggerTimeMs: timeMs,
+          targetPrice: d.targetPrice,
+          targetPct: d.targetPct,
         );
       }).toList();
       await Navigator.of(context).push(MaterialPageRoute(
@@ -641,7 +656,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Three kinds: at market (fills at the start price), at a time (fills when the clock reaches it, at any price), at a price (fills when the price reaches your price).',
+          'Three kinds: at market (fills at the start price), at a time (fills when the clock reaches it, at any price), at a price (fills when the price reaches your price). A BUY can also carry a target — a price or a % gain — and the simulator sells automatically when the price hits it.',
           style: TextStyle(color: Colors.white38, fontSize: 11.5),
         ),
       ],
@@ -652,6 +667,8 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
     final draft = _DraftRow();
     final qtyCtrl = TextEditingController(text: '1');
     final priceCtrl = TextEditingController();
+    final targetCtrl = TextEditingController();
+    var targetMode = 'NONE'; // NONE | PRICE | PCT (BUY orders only)
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -686,13 +703,56 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                 ],
               ),
               const SizedBox(height: 10),
-              TextField(
-                controller: qtyCtrl,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                    labelText: 'Quantity',
-                    labelStyle: TextStyle(color: Colors.white54)),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: qtyCtrl,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                          labelText: 'Quantity (size)',
+                          labelStyle: TextStyle(color: Colors.white54)),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline,
+                        color: Colors.white54),
+                    onPressed: () {
+                      final q = int.tryParse(qtyCtrl.text.trim()) ?? 1;
+                      if (q > 1) {
+                        qtyCtrl.text = (q - 1).toString();
+                        setDlg(() {});
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline,
+                        color: Colors.white54),
+                    onPressed: () {
+                      final q = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+                      qtyCtrl.text = (q + 1).toString();
+                      setDlg(() {});
+                    },
+                  ),
+                ],
+              ),
+              Row(
+                children: [1, 10, 25, 50, 100].map((n) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6, top: 4),
+                    child: ActionChip(
+                      label: Text('$n', style: const TextStyle(fontSize: 11.5)),
+                      backgroundColor: Colors.white10,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        qtyCtrl.text = n.toString();
+                        setDlg(() {});
+                      },
+                    ),
+                  );
+                }).toList(),
               ),
               const SizedBox(height: 10),
               DropdownButton<String>(
@@ -741,6 +801,61 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       labelText: 'Trigger price ₹',
                       labelStyle: TextStyle(color: Colors.white54)),
                 ),
+              if (draft.side == 'B') ...[
+                const SizedBox(height: 12),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Target — auto-sell when the price hits it',
+                      style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('No target',
+                          style: TextStyle(fontSize: 11.5)),
+                      selected: targetMode == 'NONE',
+                      onSelected: (_) => setDlg(() => targetMode = 'NONE'),
+                      selectedColor: _blue,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: const Text('Price ₹',
+                          style: TextStyle(fontSize: 11.5)),
+                      selected: targetMode == 'PRICE',
+                      onSelected: (_) => setDlg(() => targetMode = 'PRICE'),
+                      selectedColor: _blue,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: const Text('% gain',
+                          style: TextStyle(fontSize: 11.5)),
+                      selected: targetMode == 'PCT',
+                      onSelected: (_) => setDlg(() => targetMode = 'PCT'),
+                      selectedColor: _blue,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                if (targetMode != 'NONE')
+                  TextField(
+                    controller: targetCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                        labelText: targetMode == 'PRICE'
+                            ? 'Target price ₹'
+                            : 'Target % above buy price',
+                        labelStyle:
+                            const TextStyle(color: Colors.white54)),
+                  ),
+              ],
             ],
           ),
           actions: [
@@ -769,6 +884,18 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       if (draft.triggerPrice == null || draft.triggerPrice! <= 0) {
         _snack('Enter a valid trigger price');
         return;
+      }
+    }
+    if (draft.side == 'B' && targetMode != 'NONE') {
+      final tv = double.tryParse(targetCtrl.text.trim());
+      if (tv == null || tv <= 0) {
+        _snack('Enter a valid target');
+        return;
+      }
+      if (targetMode == 'PRICE') {
+        draft.targetPrice = tv;
+      } else {
+        draft.targetPct = tv;
       }
     }
     setState(() => _drafts.add(draft));

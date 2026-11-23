@@ -60,6 +60,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
   final SimBroker _broker = SimBroker();
   StreamSubscription<void>? _tickSub;
 
+  bool _lineChart = false; // false = candles, true = line graph
+  double _chartHeight = 240; // drag the grip under the chart to resize
+
   @override
   void initState() {
     super.initState();
@@ -126,9 +129,14 @@ class _ReplayScreenState extends State<ReplayScreen> {
       if (err != null) {
         _snack(err);
       } else {
-        _snack(
-            '${order.isBuy ? 'BUY' : 'SELL'} ${order.qty} @ ₹${order.fillPrice!.toStringAsFixed(2)}',
-            green: true);
+        var msg =
+            '${order.isBuy ? 'BUY' : 'SELL'} ${order.qty} @ ₹${order.fillPrice!.toStringAsFixed(2)}';
+        for (final o in _broker.activeOrders) {
+          if (o.parentId == order.id && o.triggerType == 'TARGET') {
+            msg += ' • target ₹${o.triggerPrice!.toStringAsFixed(2)} armed';
+          }
+        }
+        _snack(msg, green: true);
       }
     }
     setState(() {});
@@ -153,6 +161,17 @@ class _ReplayScreenState extends State<ReplayScreen> {
       final dt = DateTime.fromMillisecondsSinceEpoch(existing!.triggerTimeMs!);
       time = TimeOfDay(hour: dt.hour, minute: dt.minute);
     }
+    // Target (BUY orders only): none / exact price / % above fill.
+    final isTargetOrder = existing?.triggerType == 'TARGET';
+    var targetMode = existing?.targetPrice != null
+        ? 'PRICE'
+        : existing?.targetPct != null
+            ? 'PCT'
+            : 'NONE';
+    final targetCtrl = TextEditingController(
+        text: existing?.targetPrice?.toStringAsFixed(2) ??
+            existing?.targetPct?.toString() ??
+            '');
     final result = await showDialog<OrderDraft>(
       context: context,
       builder: (ctx) => StatefulBuilder(
@@ -191,13 +210,56 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 ],
               ),
               const SizedBox(height: 10),
-              TextField(
-                controller: qtyCtrl,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                    labelText: 'Quantity',
-                    labelStyle: TextStyle(color: Colors.white54)),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: qtyCtrl,
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                          labelText: 'Quantity (size)',
+                          labelStyle: TextStyle(color: Colors.white54)),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline,
+                        color: Colors.white54),
+                    onPressed: () {
+                      final q = int.tryParse(qtyCtrl.text.trim()) ?? 1;
+                      if (q > 1) {
+                        qtyCtrl.text = (q - 1).toString();
+                        setDlg(() {});
+                      }
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline,
+                        color: Colors.white54),
+                    onPressed: () {
+                      final q = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+                      qtyCtrl.text = (q + 1).toString();
+                      setDlg(() {});
+                    },
+                  ),
+                ],
+              ),
+              Row(
+                children: [1, 10, 25, 50, 100].map((n) {
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 6, top: 4),
+                    child: ActionChip(
+                      label: Text('$n', style: const TextStyle(fontSize: 11.5)),
+                      backgroundColor: Colors.white10,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        qtyCtrl.text = n.toString();
+                        setDlg(() {});
+                      },
+                    ),
+                  );
+                }).toList(),
               ),
               const SizedBox(height: 10),
               DropdownButton<String>(
@@ -213,6 +275,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
                         value: 'TIME', child: Text('At a time')),
                   const DropdownMenuItem(
                       value: 'PRICE', child: Text('At a price')),
+                  if (isTargetOrder)
+                    const DropdownMenuItem(
+                        value: 'TARGET', child: Text('Target (auto-sell)')),
                 ],
                 onChanged: existing == null
                     ? (v) => setDlg(() => type = v ?? 'MARKET')
@@ -237,16 +302,73 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     if (t != null) setDlg(() => time = t);
                   },
                 ),
-              if (type == 'PRICE')
+              if (type == 'PRICE' || type == 'TARGET')
                 TextField(
                   controller: priceCtrl,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
                   style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                      labelText: 'Trigger price ₹',
-                      labelStyle: TextStyle(color: Colors.white54)),
+                  decoration: InputDecoration(
+                      labelText: type == 'TARGET'
+                          ? 'Target price ₹'
+                          : 'Trigger price ₹',
+                      labelStyle: const TextStyle(color: Colors.white54)),
                 ),
+              if (side == 'B' && !isTargetOrder) ...[
+                const SizedBox(height: 12),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Target — auto-sell when the price hits it',
+                      style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  children: [
+                    ChoiceChip(
+                      label: const Text('No target',
+                          style: TextStyle(fontSize: 11.5)),
+                      selected: targetMode == 'NONE',
+                      onSelected: (_) => setDlg(() => targetMode = 'NONE'),
+                      selectedColor: _kBlue,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: const Text('Price ₹',
+                          style: TextStyle(fontSize: 11.5)),
+                      selected: targetMode == 'PRICE',
+                      onSelected: (_) => setDlg(() => targetMode = 'PRICE'),
+                      selectedColor: _kBlue,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    const SizedBox(width: 6),
+                    ChoiceChip(
+                      label: const Text('% gain',
+                          style: TextStyle(fontSize: 11.5)),
+                      selected: targetMode == 'PCT',
+                      onSelected: (_) => setDlg(() => targetMode = 'PCT'),
+                      selectedColor: _kBlue,
+                      side: BorderSide.none,
+                      visualDensity: VisualDensity.compact,
+                    ),
+                  ],
+                ),
+                if (targetMode != 'NONE')
+                  TextField(
+                    controller: targetCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                        labelText: targetMode == 'PRICE'
+                            ? 'Target price ₹'
+                            : 'Target % above buy price',
+                        labelStyle:
+                            const TextStyle(color: Colors.white54)),
+                  ),
+              ],
             ],
           ),
           actions: [
@@ -271,9 +393,20 @@ class _ReplayScreenState extends State<ReplayScreen> {
                       .millisecondsSinceEpoch;
                 }
                 double? price;
-                if (type == 'PRICE') {
+                if (type == 'PRICE' || type == 'TARGET') {
                   price = double.tryParse(priceCtrl.text.trim());
                   if (price == null || price <= 0) return;
+                }
+                double? tPrice;
+                double? tPct;
+                if (side == 'B' && !isTargetOrder) {
+                  if (targetMode == 'PRICE') {
+                    tPrice = double.tryParse(targetCtrl.text.trim());
+                    if (tPrice == null || tPrice <= 0) return;
+                  } else if (targetMode == 'PCT') {
+                    tPct = double.tryParse(targetCtrl.text.trim());
+                    if (tPct == null || tPct <= 0) return;
+                  }
                 }
                 Navigator.pop(
                   ctx,
@@ -283,6 +416,8 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     triggerType: type,
                     triggerPrice: price,
                     triggerTimeMs: timeMs,
+                    targetPrice: tPrice,
+                    targetPct: tPct,
                   ),
                 );
               },
@@ -311,6 +446,11 @@ class _ReplayScreenState extends State<ReplayScreen> {
       qty: draft.qty,
       triggerPrice: draft.triggerPrice,
       triggerTimeMs: draft.triggerTimeMs,
+      targetPrice: draft.targetPrice,
+      targetPct: draft.targetPct,
+      clearTarget: order.isBuy &&
+          draft.targetPrice == null &&
+          draft.targetPct == null,
     );
     if (err != null) {
       _snack(err);
@@ -363,6 +503,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
             _header(price, change, changePct, up, simTime, isDaily),
             _chart(),
             _controls(isDaily),
+            if (_broker.positionQty > 0) _pnlStrip(price),
             const TabBar(
               indicatorColor: _kPurple,
               labelColor: Colors.white,
@@ -455,25 +596,84 @@ class _ReplayScreenState extends State<ReplayScreen> {
         : widget.candles.sublist(0, idx);
     final partial = _engine.partialCandle;
     final triggerPrices = _broker.activeOrders
-        .where((o) => o.triggerType == 'PRICE' && o.triggerPrice != null)
+        .where((o) =>
+            (o.triggerType == 'PRICE' || o.triggerType == 'TARGET') &&
+            o.triggerPrice != null)
         .map((o) => o.triggerPrice!)
         .toList();
-    return Container(
-      height: 240,
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: _kCard,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white10),
-      ),
-      child: CustomPaint(
-        size: Size.infinite,
-        painter: _ChartPainter(
-          done: done,
-          partial: partial,
-          triggerPrices: triggerPrices,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 12, 0),
+          child: Row(
+            children: [
+              const Text('Chart',
+                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+              const Spacer(),
+              ChoiceChip(
+                label: const Text('Candles', style: TextStyle(fontSize: 11.5)),
+                selected: !_lineChart,
+                onSelected: (_) => setState(() => _lineChart = false),
+                selectedColor: _kBlue,
+                backgroundColor: _kCard,
+                side: BorderSide.none,
+                visualDensity: VisualDensity.compact,
+              ),
+              const SizedBox(width: 6),
+              ChoiceChip(
+                label: const Text('Line graph',
+                    style: TextStyle(fontSize: 11.5)),
+                selected: _lineChart,
+                onSelected: (_) => setState(() => _lineChart = true),
+                selectedColor: _kBlue,
+                backgroundColor: _kCard,
+                side: BorderSide.none,
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
         ),
-      ),
+        Container(
+          height: _chartHeight,
+          margin: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+          decoration: BoxDecoration(
+            color: _kCard,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: _ChartPainter(
+              done: done,
+              partial: partial,
+              triggerPrices: triggerPrices,
+              lineMode: _lineChart,
+            ),
+          ),
+        ),
+        // Drag grip — pull down/up to make the chart bigger/smaller.
+        GestureDetector(
+          onVerticalDragUpdate: (d) {
+            setState(() {
+              _chartHeight =
+                  (_chartHeight + d.delta.dy).clamp(150.0, 520.0);
+            });
+          },
+          child: Container(
+            height: 18,
+            color: Colors.transparent,
+            alignment: Alignment.center,
+            child: Container(
+              width: 44,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -579,6 +779,42 @@ class _ReplayScreenState extends State<ReplayScreen> {
     );
   }
 
+  /// Slim live strip under the controls: your open position and its
+  /// P&L at the current replay price, always visible while trading.
+  Widget _pnlStrip(double price) {
+    final unreal = _broker.unrealizedPnl(price);
+    final pct = _broker.invested > 0
+        ? unreal / _broker.invested * 100
+        : 0.0;
+    final color = unreal >= 0 ? _kGreen : _kRed;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 2, 12, 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withAlpha(26),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(70)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.account_balance_wallet_outlined,
+              color: Colors.white54, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            'Holding ${_broker.positionQty} @ ₹${_broker.positionAvg.toStringAsFixed(2)}',
+            style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+          ),
+          const Spacer(),
+          Text(
+            '${_fmtMoney(unreal)} (${unreal >= 0 ? '+' : ''}${pct.toStringAsFixed(2)}%)',
+            style: TextStyle(
+                color: color, fontSize: 13, fontWeight: FontWeight.bold),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ---------------- Orders tab ----------------
 
   Widget _ordersTab() {
@@ -673,17 +909,25 @@ class _ReplayScreenState extends State<ReplayScreen> {
             : 'at a time';
       case 'PRICE':
         return 'when price reaches ₹${o.triggerPrice?.toStringAsFixed(2) ?? '—'}';
+      case 'TARGET':
+        return 'TARGET ₹${o.triggerPrice?.toStringAsFixed(2) ?? '—'} — auto-sell of order #${o.parentId ?? '—'}';
       default:
         return 'market';
     }
   }
 
   Widget _activeOrderRow(SimOrder o) {
+    var subtitle = 'Order #${o.id} • waiting';
+    if (o.isBuy && o.targetPrice != null) {
+      subtitle += ' • target ₹${o.targetPrice!.toStringAsFixed(2)}';
+    } else if (o.isBuy && o.targetPct != null) {
+      subtitle += ' • target +${o.targetPct!.toStringAsFixed(1)}%';
+    }
     return ListTile(
       leading: _sideChip(o),
       title: Text('${o.qty} qty • ${_orderTriggerDetail(o)}',
           style: const TextStyle(color: Colors.white, fontSize: 13.5)),
-      subtitle: Text('Order #${o.id} • waiting',
+      subtitle: Text(subtitle,
           style: const TextStyle(color: Colors.white38, fontSize: 11.5)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -738,10 +982,62 @@ class _ReplayScreenState extends State<ReplayScreen> {
 
   Widget _portfolioTab(double price) {
     final unreal = _broker.unrealizedPnl(price);
-    final total = _broker.realizedPnl + unreal;
+    final realized = _broker.realizedPnl;
+    final total = realized + unreal;
+    final totalColor = total >= 0 ? _kGreen : _kRed;
+    final invested = _broker.invested;
+    final currentValue = price * _broker.positionQty;
+    final totalPct = invested > 0 ? total / invested * 100 : null;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
+        // Hero card: the one number that matters, big.
+        Container(
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: totalColor.withAlpha(24),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: totalColor.withAlpha(80)),
+          ),
+          child: Column(
+            children: [
+              const Text('TOTAL P&L',
+                  style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 1.2)),
+              const SizedBox(height: 4),
+              Text(
+                _fmtMoney(total),
+                style: TextStyle(
+                    color: totalColor,
+                    fontSize: 30,
+                    fontWeight: FontWeight.bold),
+              ),
+              if (totalPct != null)
+                Text(
+                  '${total >= 0 ? '+' : ''}${totalPct.toStringAsFixed(2)}% on invested ${_fmtMoney(invested)}',
+                  style:
+                      const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _pnlMini('Booked (realized)', realized),
+                  ),
+                  Container(width: 1, height: 34, color: Colors.white10),
+                  Expanded(
+                    child: _pnlMini('Open (unrealized)', unreal),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        // Position card.
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -752,28 +1048,46 @@ class _ReplayScreenState extends State<ReplayScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(widget.title,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold)),
+              Row(
+                children: [
+                  Text(widget.title,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold)),
+                  const Spacer(),
+                  if (_broker.positionQty > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _kBlue.withAlpha(40),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text('${_broker.positionQty} qty',
+                          style: const TextStyle(
+                              color: _kBlue,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                ],
+              ),
               const SizedBox(height: 10),
               if (_broker.positionQty > 0) ...[
-                _pfRow('Holding', '${_broker.positionQty} qty'),
-                _pfRow('Average price',
+                _pfRow('Average buy price',
                     '₹${_broker.positionAvg.toStringAsFixed(2)}'),
                 _pfRow('Current price', '₹${price.toStringAsFixed(2)}'),
-                _pfRow('Invested', _fmtMoney(_broker.invested)),
-                _pfRow('Unrealized P&L', _fmtMoney(unreal),
-                    color: unreal >= 0 ? _kGreen : _kRed),
+                _pfRow('Invested', _fmtMoney(invested)),
+                _pfRow('Current value', _fmtMoney(currentValue)),
+                _pfRow(
+                  'Per-share P&L',
+                  _fmtMoney(price - _broker.positionAvg),
+                  color: price >= _broker.positionAvg ? _kGreen : _kRed,
+                ),
               ] else
-                const Text('No open position right now',
+                const Text(
+                    'No open position right now.\nBooked P&L above is final for this session unless you trade again.',
                     style: TextStyle(color: Colors.white54, fontSize: 13)),
-              const Divider(color: Colors.white10, height: 20),
-              _pfRow('Realized P&L (booked)', _fmtMoney(_broker.realizedPnl),
-                  color: _broker.realizedPnl >= 0 ? _kGreen : _kRed),
-              _pfRow('Total P&L', _fmtMoney(total),
-                  color: total >= 0 ? _kGreen : _kRed, bold: true),
             ],
           ),
         ),
@@ -812,6 +1126,20 @@ class _ReplayScreenState extends State<ReplayScreen> {
     );
   }
 
+  Widget _pnlMini(String label, double value) {
+    final color = value >= 0 ? _kGreen : _kRed;
+    return Column(
+      children: [
+        Text(label,
+            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+        const SizedBox(height: 2),
+        Text(_fmtMoney(value),
+            style: TextStyle(
+                color: color, fontSize: 15, fontWeight: FontWeight.bold)),
+      ],
+    );
+  }
+
   Widget _pfRow(String label, String value, {Color? color, bool bold = false}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
@@ -837,11 +1165,13 @@ class _ChartPainter extends CustomPainter {
   final List<Candle> done;
   final Candle partial;
   final List<double> triggerPrices;
+  final bool lineMode;
 
   _ChartPainter({
     required this.done,
     required this.partial,
     required this.triggerPrices,
+    this.lineMode = false,
   });
 
   @override
@@ -887,23 +1217,55 @@ class _ChartPainter extends CustomPainter {
       tp.paint(canvas, Offset(chartW + 4, yy - 5));
     }
 
-    // Candles
+    // Price marks: candles, or a line through the closes.
     final slot = chartW / max(all.length, 8);
-    final bodyW = max(1.0, slot * 0.68);
-    for (var i = 0; i < all.length; i++) {
-      final c = all[i];
-      final cx = slot * i + slot / 2;
-      final upC = c.close >= c.open;
-      final paint = Paint()..color = upC ? _kGreen : _kRed;
-      canvas.drawLine(
-          Offset(cx, y(c.high)), Offset(cx, y(c.low)), paint..strokeWidth = 1);
-      final top = y(max(c.open, c.close));
-      final bottom = y(min(c.open, c.close));
-      canvas.drawRect(
-        Rect.fromLTRB(cx - bodyW / 2, top, cx + bodyW / 2,
-            max(bottom, top + 1)),
-        paint,
+    if (lineMode) {
+      final path = Path();
+      for (var i = 0; i < all.length; i++) {
+        final cx = slot * i + slot / 2;
+        final yy = y(all[i].close);
+        if (i == 0) {
+          path.moveTo(cx, yy);
+        } else {
+          path.lineTo(cx, yy);
+        }
+      }
+      // Soft fill under the line.
+      final fillPath = Path.from(path);
+      final lastX = slot * (all.length - 1) + slot / 2;
+      fillPath.lineTo(lastX, size.height);
+      fillPath.lineTo(slot / 2, size.height);
+      fillPath.close();
+      canvas.drawPath(
+          fillPath, Paint()..color = _kBlue.withAlpha(38));
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = _kBlue
+          ..strokeWidth = 1.8
+          ..style = PaintingStyle.stroke
+          ..strokeJoin = StrokeJoin.round,
       );
+      // Current price dot.
+      canvas.drawCircle(
+          Offset(lastX, y(all.last.close)), 3, Paint()..color = _kBlue);
+    } else {
+      final bodyW = max(1.0, slot * 0.68);
+      for (var i = 0; i < all.length; i++) {
+        final c = all[i];
+        final cx = slot * i + slot / 2;
+        final upC = c.close >= c.open;
+        final paint = Paint()..color = upC ? _kGreen : _kRed;
+        canvas.drawLine(Offset(cx, y(c.high)), Offset(cx, y(c.low)),
+            paint..strokeWidth = 1);
+        final top = y(max(c.open, c.close));
+        final bottom = y(min(c.open, c.close));
+        canvas.drawRect(
+          Rect.fromLTRB(cx - bodyW / 2, top, cx + bodyW / 2,
+              max(bottom, top + 1)),
+          paint,
+        );
+      }
     }
 
     // Active price-trigger lines (dashed purple)
