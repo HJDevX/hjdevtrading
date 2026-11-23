@@ -8,40 +8,83 @@ import 'package:hjdev_trading/screens/practice/simulator_screen.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
 import 'package:hjdev_trading/services/paper_broker.dart';
 
-/// PRACTICE page — paper trading only.
+/// PRACTICE page — paper trading only, against a VIRTUAL FUND
+/// (₹1,00,000 starting; equity buys get 5x MTF leverage — see
+/// PaperBroker). The app bar shows the available fund at all times.
 ///  Tab 1: Orders    — every paper order placed from the watchlist
 ///  Tab 2: Portfolio — current paper holdings with live P&L and exit
-/// The flask icon in the app bar opens the SIMULATOR — a separate
-/// practice market on fake prices, for when the real market is closed.
-class PracticeScreen extends StatelessWidget {
+/// The flask icon in the app bar opens the SIMULATOR — replay a real
+/// past trading day with historical prices, for practice any time.
+class PracticeScreen extends StatefulWidget {
   const PracticeScreen({super.key});
 
   @override
+  State<PracticeScreen> createState() => _PracticeScreenState();
+}
+
+class _PracticeScreenState extends State<PracticeScreen> {
+  PaperFundInfo? _fund;
+  int _seenRevision = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFund();
+  }
+
+  Future<void> _loadFund() async {
+    final fund = await PaperBroker.instance.fundInfo();
+    if (!mounted) return;
+    setState(() => _fund = fund);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    if (_seenRevision != PaperBroker.revision) {
+      _seenRevision = PaperBroker.revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadFund());
+    }
     return DefaultTabController(
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: const Row(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Practice',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
-              SizedBox(width: 10),
-              Chip(
-                label: Text('PAPER',
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: Colors.orange,
-                        fontWeight: FontWeight.bold)),
-                backgroundColor: Color(0xFF3A2A12),
-                side: BorderSide.none,
-                visualDensity: VisualDensity.compact,
+              const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Practice',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+                  SizedBox(width: 10),
+                  Chip(
+                    label: Text('PAPER',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.orange,
+                            fontWeight: FontWeight.bold)),
+                    backgroundColor: Color(0xFF3A2A12),
+                    side: BorderSide.none,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+              Text(
+                _fund == null
+                    ? 'Virtual fund: …'
+                    : 'Virtual fund: ${_fmtMoney(_fund!.available)} available'
+                        ' • ${_fmtMoney(_fund!.marginBlocked)} blocked',
+                style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontWeight: FontWeight.normal),
               ),
             ],
           ),
           actions: [
             IconButton(
-              tooltip: 'Simulator — practice on fake moving prices',
+              tooltip: 'Simulator — replay a real past day',
               icon: const Icon(Icons.science_outlined),
               onPressed: () {
                 Navigator.of(context).push(
@@ -223,6 +266,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
 
   List<PaperPosition> _positions = [];
   final Map<String, Quote> _quotesByToken = {};
+  PaperFundInfo? _fund;
   bool _loading = true;
   int _seenRevision = -1;
   Timer? _timer;
@@ -246,9 +290,11 @@ class _PortfolioTabState extends State<_PortfolioTab>
 
   Future<void> _load() async {
     final positions = await _db.getPaperPositions();
+    final fund = await PaperBroker.instance.fundInfo();
     if (!mounted) return;
     setState(() {
       _positions = positions;
+      _fund = fund;
       _loading = false;
     });
     _refreshPrices();
@@ -341,18 +387,40 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.white10),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _summaryCol('Invested', _fmtMoney(invested)),
-                  _summaryCol('Current', _fmtMoney(current)),
-                  _summaryCol(
-                    'P&L',
-                    _fmtMoney(pnl),
-                    color: pnl >= 0
-                        ? const Color(0xFF00C853)
-                        : const Color(0xFFE53935),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _summaryCol('Invested', _fmtMoney(invested)),
+                      _summaryCol('Current', _fmtMoney(current)),
+                      _summaryCol(
+                        'P&L',
+                        _fmtMoney(pnl),
+                        color: pnl >= 0
+                            ? const Color(0xFF00C853)
+                            : const Color(0xFFE53935),
+                      ),
+                    ],
                   ),
+                  if (_fund != null) ...[
+                    const Divider(color: Colors.white10, height: 20),
+                    _fundRow('Virtual fund (start)',
+                        _fmtMoney(_fund!.startingFund)),
+                    _fundRow('Margin blocked',
+                        _fmtMoney(_fund!.marginBlocked)),
+                    _fundRow('Available fund',
+                        _fmtMoney(_fund!.available),
+                        bold: true),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 4),
+                      child: Text(
+                        'Equity buys block only 1/5th (5x MTF leverage); F&O blocks full value.',
+                        style: TextStyle(color: Colors.white38, fontSize: 11),
+                      ),
+                    ),
+                  ],
                 ],
               ),
             );
@@ -421,6 +489,24 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 fontSize: 14,
                 fontWeight: FontWeight.bold)),
       ],
+    );
+  }
+
+  Widget _fundRow(String label, String value, {bool bold = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
+          Text(value,
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+        ],
+      ),
     );
   }
 }

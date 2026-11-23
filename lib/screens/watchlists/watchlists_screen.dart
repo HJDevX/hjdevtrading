@@ -459,163 +459,19 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   // ---------------- Item detail + paper trade ----------------
 
   void _showItemSheet(WatchItem item) {
-    final quote = item.id != null ? _quotes[item.id!] : null;
-    final isDeriv = item.instrumentType == 'FUT' ||
-        item.instrumentType == 'CE' ||
-        item.instrumentType == 'PE';
-    final step = isDeriv ? (item.lotSize ?? 1) : 1;
-    var qty = step;
-
     showModalBottomSheet(
       context: context,
       backgroundColor: _card,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSheet) => Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(item.symbol,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold)),
-                        Text(item.displayName,
-                            style: const TextStyle(
-                                color: Colors.white54, fontSize: 12),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
-                      ],
-                    ),
-                  ),
-                  Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.withAlpha(40),
-                      borderRadius: BorderRadius.circular(4),
-                    ),
-                    child: const Text('PAPER',
-                        style: TextStyle(
-                            color: Colors.orange,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              if (quote != null) ...[
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('₹${quote.ltp.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold)),
-                    Text(
-                      '${quote.change >= 0 ? '+' : ''}${quote.change.toStringAsFixed(2)} (${quote.changePct >= 0 ? '+' : ''}${quote.changePct.toStringAsFixed(2)}%)',
-                      style: TextStyle(
-                          color: quote.change >= 0 ? _green : _red,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                _ohlcRow('Open', quote.open),
-                _ohlcRow('High', quote.high),
-                _ohlcRow('Low', quote.low),
-                _ohlcRow('Prev Close', quote.prevClose),
-                _ohlcRow('Volume', quote.volume.toDouble(), isVolume: true),
-              ] else
-                const Text('Live price not loaded yet',
-                    style: TextStyle(color: Colors.white54)),
-              const SizedBox(height: 18),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text('Quantity',
-                      style: TextStyle(color: Colors.white70, fontSize: 14)),
-                  Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.remove_circle_outline,
-                            color: Colors.white70),
-                        onPressed: () {
-                          if (qty > step) setSheet(() => qty -= step);
-                        },
-                      ),
-                      Text('$qty',
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold)),
-                      IconButton(
-                        icon: const Icon(Icons.add_circle_outline,
-                            color: Colors.white70),
-                        onPressed: () => setSheet(() => qty += step),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () =>
-                          _paperTrade(item, 'B', qty, quote, ctx),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _green,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                      ),
-                      child: const Text('BUY (Paper)',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () =>
-                          _paperTrade(item, 'S', qty, quote, ctx),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _red,
-                        padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                      ),
-                      child: const Text('SELL (Paper)',
-                          style: TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              const Center(
-                child: Text('Paper trade only — no real order goes to Kotak',
-                    style: TextStyle(color: Colors.white38, fontSize: 11)),
-              ),
-            ],
-          ),
-        ),
+      builder: (ctx) => _ItemSheet(
+        item: item,
+        // Always the freshest quote the watchlist itself has — the
+        // sheet re-reads this on its own timer, so its price moves
+        // live exactly like the rows behind it.
+        quoteProvider: () => item.id != null ? _quotes[item.id!] : null,
+        onTrade: (side, qty, price) => _paperTrade(item, side, qty, price),
       ),
     );
   }
@@ -639,33 +495,35 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
     );
   }
 
-  Future<void> _paperTrade(WatchItem item, String side, int qty,
-      Quote? quote, BuildContext sheetCtx) async {
-    var price = quote?.ltp ?? 0;
-    if (price <= 0) {
+  /// Runs one paper trade at [price] (one fresh quote fetch first if
+  /// the price is missing). Shows the result snack itself and returns
+  /// the broker's error, or null on success — the sheet closes on
+  /// success and stays open on an error.
+  Future<String?> _paperTrade(
+      WatchItem item, String side, int qty, double price) async {
+    var p = price;
+    if (p <= 0) {
       // One fresh fetch before giving up.
       final fresh = await _api.getQuotesBatch([item]);
       final freshQuote = (item.token != null ? fresh[item.token!] : null) ??
           fresh['${item.exchange}|${item.symbol}'] ??
           fresh['${item.exchange}|${item.token}'];
       if (freshQuote != null) {
-        price = freshQuote.ltp;
+        p = freshQuote.ltp;
       }
     }
     final error = side == 'B'
-        ? await PaperBroker.instance.buy(item: item, qty: qty, price: price)
-        : await PaperBroker.instance.sell(item: item, qty: qty, price: price);
-    if (!mounted) return;
-    if (sheetCtx.mounted) {
-      Navigator.of(sheetCtx).pop();
-    }
+        ? await PaperBroker.instance.buy(item: item, qty: qty, price: p)
+        : await PaperBroker.instance.sell(item: item, qty: qty, price: p);
+    if (!mounted) return error;
     if (error != null) {
       _snack(error, green: false);
     } else {
       _snack(
-          'Paper ${side == 'B' ? 'BUY' : 'SELL'} $qty ${item.symbol} @ ₹${price.toStringAsFixed(2)} — see Practice tab',
+          'Paper ${side == 'B' ? 'BUY' : 'SELL'} $qty ${item.symbol} @ ₹${p.toStringAsFixed(2)} — see Practice tab',
           green: true);
     }
+    return error;
   }
 
   // ---------------- Build ----------------
@@ -977,6 +835,381 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                 }
               },
             ),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// The watchlist item detail sheet (paper BUY/SELL). Its price is
+/// LIVE: a short timer keeps re-reading the freshest quote from the
+/// watchlist (REST poll or feed tick), so the price in the dialogue
+/// moves exactly like the rows behind it. The sheet also shows the
+/// VIRTUAL FUND — available money, this order's margin (equity
+/// blocks only 1/5th at 5x MTF leverage; F&O blocks full value) —
+/// and the quantity can be stepped or typed in manually.
+class _ItemSheet extends StatefulWidget {
+  final WatchItem item;
+  final Quote? Function() quoteProvider;
+  final Future<String?> Function(String side, int qty, double price)
+      onTrade;
+
+  const _ItemSheet({
+    required this.item,
+    required this.quoteProvider,
+    required this.onTrade,
+  });
+
+  @override
+  State<_ItemSheet> createState() => _ItemSheetState();
+}
+
+class _ItemSheetState extends State<_ItemSheet> {
+  static const Color _green = Color(0xFF00C853);
+  static const Color _red = Color(0xFFE53935);
+  static const Color _card = Color(0xFF161B22);
+
+  late final int _step;
+  late int _qty;
+  Quote? _quote;
+  PaperFundInfo? _fund;
+  Timer? _timer;
+  bool _trading = false;
+
+  bool get _isDeriv =>
+      widget.item.instrumentType == 'FUT' ||
+      widget.item.instrumentType == 'CE' ||
+      widget.item.instrumentType == 'PE';
+
+  bool get _isEquity => widget.item.instrumentType == 'EQ';
+
+  @override
+  void initState() {
+    super.initState();
+    _step = _isDeriv ? (widget.item.lotSize ?? 1) : 1;
+    _qty = _step;
+    _quote = widget.quoteProvider();
+    _loadFund();
+    // Live price: re-read the watchlist's freshest quote ~every
+    // second and redraw — the same data the rows are showing.
+    _timer = Timer.periodic(const Duration(milliseconds: 800), (_) {
+      if (!mounted) return;
+      setState(() => _quote = widget.quoteProvider() ?? _quote);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadFund() async {
+    final fund = await PaperBroker.instance.fundInfo();
+    if (mounted) setState(() => _fund = fund);
+  }
+
+  Future<void> _editQty() async {
+    final ctrl = TextEditingController(text: _qty.toString());
+    final value = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        title: const Text('Type quantity',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: Colors.white),
+          decoration: InputDecoration(
+            labelText: _isDeriv
+                ? 'Quantity (lots of $_step)'
+                : 'Quantity',
+            labelStyle: const TextStyle(color: Colors.white54),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx, int.tryParse(ctrl.text.trim())),
+            child: const Text('Set'),
+          ),
+        ],
+      ),
+    );
+    if (value == null || !mounted) return;
+    if (value <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Quantity must be more than 0'),
+          backgroundColor: Colors.red));
+      return;
+    }
+    if (_isDeriv && value % _step != 0) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Quantity must be in lots of $_step'),
+          backgroundColor: Colors.red));
+      return;
+    }
+    setState(() => _qty = value);
+  }
+
+  Future<void> _trade(String side) async {
+    if (_trading) return;
+    setState(() => _trading = true);
+    final error = await widget.onTrade(side, _qty, _quote?.ltp ?? 0);
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _trading = false);
+      _loadFund(); // available fund may have changed
+    }
+  }
+
+  Widget _row(String label, String value, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label,
+              style: const TextStyle(color: Colors.white54, fontSize: 13)),
+          Text(value,
+              style: TextStyle(
+                  color: color ?? Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final item = widget.item;
+    final quote = _quote;
+    final ltp = quote?.ltp ?? 0;
+    final margin = ltp > 0
+        ? PaperBroker.marginFor(
+            qty: _qty, price: ltp, instrumentType: item.instrumentType)
+        : 0.0;
+    final available = _fund?.available;
+    final notEnough =
+        available != null && margin > 0 && margin > available + 0.005;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(item.symbol,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold)),
+                    Text(item.displayName,
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 12),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withAlpha(40),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('PAPER',
+                    style: TextStyle(
+                        color: Colors.orange,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (quote != null) ...[
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Text('₹${quote.ltp.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold)),
+                    const SizedBox(width: 8),
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: _green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    const Text('LIVE',
+                        style: TextStyle(
+                            color: _green,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                Text(
+                  '${quote.change >= 0 ? '+' : ''}${quote.change.toStringAsFixed(2)} (${quote.changePct >= 0 ? '+' : ''}${quote.changePct.toStringAsFixed(2)}%)',
+                  style: TextStyle(
+                      color: quote.change >= 0 ? _green : _red,
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _row('Open', '₹${quote.open.toStringAsFixed(2)}'),
+            _row('High', '₹${quote.high.toStringAsFixed(2)}'),
+            _row('Low', '₹${quote.low.toStringAsFixed(2)}'),
+            _row('Prev Close', '₹${quote.prevClose.toStringAsFixed(2)}'),
+            _row('Volume', quote.volume.toString()),
+          ] else
+            const Text('Live price not loaded yet',
+                style: TextStyle(color: Colors.white54)),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.white.withAlpha(10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                _row(
+                  'Available fund',
+                  available == null
+                      ? '…'
+                      : '₹${available.toStringAsFixed(2)}',
+                ),
+                _row(
+                  'Leverage',
+                  _isEquity ? '5x (MTF)' : 'None — full amount',
+                ),
+                _row(
+                  'Margin needed for BUY',
+                  ltp > 0 ? '₹${margin.toStringAsFixed(2)}' : '—',
+                  color: notEnough ? _red : null,
+                ),
+                if (notEnough)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Not enough virtual fund for this quantity',
+                      style: TextStyle(color: _red, fontSize: 11.5),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Quantity',
+                  style: TextStyle(color: Colors.white70, fontSize: 14)),
+              Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.remove_circle_outline,
+                        color: Colors.white70),
+                    onPressed: () {
+                      if (_qty > _step) setState(() => _qty -= _step);
+                    },
+                  ),
+                  GestureDetector(
+                    onTap: _editQty,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white24),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text('$_qty',
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline,
+                        color: Colors.white70),
+                    onPressed: () => setState(() => _qty += _step),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const Center(
+            child: Text('Tap the quantity number to type it directly',
+                style: TextStyle(color: Colors.white24, fontSize: 10.5)),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _trading ? null : () => _trade('B'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _green,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('BUY (Paper)',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: _trading ? null : () => _trade('S'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _red,
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                  child: const Text('SELL (Paper)',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          const Center(
+            child: Text('Paper trade only — no real order goes to Kotak',
+                style: TextStyle(color: Colors.white38, fontSize: 11)),
+          ),
         ],
       ),
     );

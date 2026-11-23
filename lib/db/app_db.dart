@@ -12,8 +12,9 @@ import 'package:hjdev_trading/models/watchlist.dart';
 ///  - scrips                    : Kotak's full instrument list (Refresh)
 ///  - paper_orders              : practice orders placed from watchlist
 ///  - paper_positions           : practice holdings
-///  - sim_orders / sim_positions: SIMULATOR trades (fake prices) — kept
-///    fully separate from the real paper record
+///  - paper_account             : the virtual fund (starting capital)
+///  - sim_orders / sim_positions: legacy SIMULATOR tables (old fake-price
+///    simulator) — orphaned by the replay simulator, kept harmless
 class AppDb {
   static final AppDb instance = AppDb._init();
   static Database? _database;
@@ -32,7 +33,7 @@ class AppDb {
 
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -43,6 +44,7 @@ class AppDb {
     await _createScripsTable(db);
     await _createPaperTables(db);
     await _createSimTables(db);
+    await _createPaperAccountTable(db);
   }
 
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -68,6 +70,9 @@ class AppDb {
     }
     if (oldVersion < 4) {
       await _createSimTables(db);
+    }
+    if (oldVersion < 5) {
+      await _createPaperAccountTable(db);
     }
   }
 
@@ -357,6 +362,42 @@ class AppDb {
     final db = await instance.database;
     return await db
         .delete('paper_positions', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---------------- Paper virtual fund ----------------
+  // One row: the starting capital for paper trading (default
+  // ₹1,00,000). The live balance is never stored — it is derived:
+  // available = starting + realized P&L − margin blocked in open
+  // positions (see PaperBroker.fundInfo).
+
+  Future<void> _createPaperAccountTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS paper_account (
+        id INTEGER PRIMARY KEY,
+        starting_fund REAL NOT NULL
+      )
+    ''');
+    await db.execute(
+        'INSERT OR IGNORE INTO paper_account (id, starting_fund) VALUES (1, 100000)');
+  }
+
+  Future<double> getPaperStartingFund() async {
+    final db = await instance.database;
+    final rows = await db.query('paper_account',
+        columns: ['starting_fund'], where: 'id = ?', whereArgs: [1]);
+    if (rows.isEmpty) return 100000;
+    final v = rows.first['starting_fund'];
+    return v is num ? v.toDouble() : 100000;
+  }
+
+  /// Total booked (realized) P&L across all paper orders.
+  Future<double> getPaperRealizedTotal() async {
+    final db = await instance.database;
+    final rows = await db
+        .rawQuery('SELECT COALESCE(SUM(realized_pnl), 0) AS t FROM paper_orders');
+    if (rows.isEmpty) return 0;
+    final v = rows.first['t'];
+    return v is num ? v.toDouble() : 0;
   }
 
   // ---------------- Simulator trading ----------------
