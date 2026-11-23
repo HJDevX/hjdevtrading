@@ -44,6 +44,11 @@ enum IndexFeedState {
 ///  - reconnects are scheduled with a Timer, never called synchronously
 ///    from inside a stream callback
 ///  - every message handler is wrapped in try/catch
+///  - packet decoding is sliced (max 200 packets per event-loop
+///    turn) and reconnects back off (3s, 6s, 9s...) — added after
+///    the third freeze, which again followed a network drop +
+///    reconnect + auth frame; the heartbeat prints frame/packet/
+///    tick counters so any future freeze log is decisive
 ///  - auth is tried with SID first; on 1120 it retries ONCE with the
 ///    session token; a second 1120 stops the service (state = error)
 class IndexFeedService {
@@ -64,6 +69,15 @@ class IndexFeedService {
   Timer? _reconnectTimer;
   Timer? _heartbeatTimer;
   bool _loggedFirstFrame = false;
+  bool _loggedFirstBinary = false;
+
+  // Freeze-detective counters, printed by the heartbeat: exactly how
+  // far the feed got before any freeze (frames in, packets decoded,
+  // ticks out, last control code seen).
+  int _framesReceived = 0;
+  int _packetsDecoded = 0;
+  int _ticksEmitted = 0;
+  int? _lastControlCode;
 
   int _generation = 0;
   bool _manualClose = false;
@@ -151,7 +165,9 @@ class IndexFeedService {
   void _startHeartbeat() {
     _heartbeatTimer?.cancel();
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
-      debugPrint('IndexFeed: heartbeat (state=$_state)');
+      debugPrint('IndexFeed: heartbeat (state=$_state, '
+          'frames=$_framesReceived, packets=$_packetsDecoded, '
+          'ticks=$_ticksEmitted, lastCode=$_lastControlCode)');
     });
   }
 
@@ -223,6 +239,7 @@ class IndexFeedService {
     try {
       debugPrint('IndexFeed: opening socket...');
       _loggedFirstFrame = false;
+      _loggedFirstBinary = false;
       final channel = WebSocketChannel.connect(Uri.parse(_wsUrl(feedUrl)));
       _channel = channel;
       _subscription = channel.stream.listen(
@@ -332,7 +349,9 @@ class IndexFeedService {
     _retryCount++;
     _setState(IndexFeedState.reconnecting);
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+    // Backoff: 3s, 6s, 9s... — on a dead network, hammering the
+    // reconnect is what all three freezes followed.
+    _reconnectTimer = Timer(Duration(seconds: 3 * _retryCount), () {
       if (_manualClose) return;
       // Force a fresh connect attempt.
       _state = IndexFeedState.disconnected;
@@ -382,6 +401,7 @@ class IndexFeedService {
 
   void _onMessage(dynamic message) {
     try {
+      _framesReceived++;
       if (!_loggedFirstFrame) {
         _loggedFirstFrame = true;
         debugPrint(
@@ -390,9 +410,9 @@ class IndexFeedService {
       if (message is String) {
         _handleTextMessage(message);
       } else if (message is List<int>) {
-        _parseFrame(Uint8List.fromList(message));
+        _parseFrame(Uint8List.fromList(message), _generation);
       } else if (message is Uint8List) {
-        _parseFrame(message);
+        _parseFrame(message, _generation);
       }
     } catch (e) {
       // A bad packet must never crash the app.
@@ -413,6 +433,7 @@ class IndexFeedService {
     final code = codeRaw is num
         ? codeRaw.toInt()
         : int.tryParse(codeRaw?.toString() ?? '');
+    _lastControlCode = code;
     debugPrint('IndexFeed: auth/control message_code=$code');
 
     if (decoded['format'] == 'native_fallback') {
@@ -489,15 +510,38 @@ class IndexFeedService {
 
   /// A frame is a batch of packets; each starts with a uint16 LE total
   /// length that INCLUDES the 2 length bytes and the 9-byte header.
-  void _parseFrame(Uint8List bytes) {
+  ///
+  /// HARDENING (after the third freeze): never decode more than 200
+  /// packets in one event-loop turn. If a frame carries more (a huge
+  /// snapshot burst), the rest is decoded on the next turn — a burst
+  /// can then never monopolise the main thread long enough to ANR.
+  /// The generation stamp drops leftovers from a dead socket.
+  void _parseFrame(Uint8List bytes, int gen) {
+    _parseFrameSlice(bytes, 0, gen);
+  }
+
+  void _parseFrameSlice(Uint8List bytes, int startOffset, int gen) {
+    if (gen != _generation) return; // leftover from a dead socket
     final bd = bytes.buffer.asByteData(bytes.offsetInBytes, bytes.length);
-    var offset = 0;
+    var offset = startOffset;
+    var processed = 0;
     while (offset + 2 <= bytes.length) {
       final totalLength = bd.getUint16(offset, Endian.little);
       if (totalLength < 9) break;
       if (offset + totalLength > bytes.length) break; // truncated tail
       _parsePacket(Uint8List.sublistView(bytes, offset, offset + totalLength));
+      _packetsDecoded++;
       offset += totalLength;
+      processed++;
+      if (processed >= 200 && offset + 2 <= bytes.length) {
+        Timer(Duration.zero, () => _parseFrameSlice(bytes, offset, gen));
+        return;
+      }
+    }
+    if (!_loggedFirstBinary) {
+      _loggedFirstBinary = true;
+      debugPrint(
+          'IndexFeed: first binary frame decoded ok (packets so far: $_packetsDecoded)');
     }
   }
 
@@ -567,6 +611,7 @@ class IndexFeedService {
       volume: 0,
       changePct: pctRaw / 100.0,
     );
+    _ticksEmitted++;
     if (!_ticksController.isClosed) _ticksController.add(quote);
   }
 
@@ -606,6 +651,7 @@ class IndexFeedService {
       volume: 0,
       changePct: pct,
     );
+    _ticksEmitted++;
     if (!_ticksController.isClosed) _ticksController.add(quote);
   }
 }
