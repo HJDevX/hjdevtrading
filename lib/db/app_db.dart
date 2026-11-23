@@ -35,7 +35,7 @@ class AppDb {
 
     return await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -89,6 +89,20 @@ class AppDb {
     }
     if (oldVersion < 7) {
       await _createPendingOrdersTable(db);
+    }
+    if (oldVersion < 8) {
+      // Pending orders gain the stop-loss plan + exit flag.
+      for (final ddl in [
+        'ALTER TABLE paper_pending_orders ADD COLUMN sl_price REAL',
+        'ALTER TABLE paper_pending_orders ADD COLUMN sl_pct REAL',
+        'ALTER TABLE paper_pending_orders ADD COLUMN is_stop_loss INTEGER NOT NULL DEFAULT 0',
+      ]) {
+        try {
+          await db.execute(ddl);
+        } catch (_) {
+          // Column already exists — fine.
+        }
+      }
     }
   }
 
@@ -448,8 +462,11 @@ class AppDb {
         target_price REAL,
         target_pct REAL,
         target_time_ms INTEGER,
+        sl_price REAL,
+        sl_pct REAL,
         status TEXT NOT NULL DEFAULT 'ACTIVE',
         is_target INTEGER NOT NULL DEFAULT 0,
+        is_stop_loss INTEGER NOT NULL DEFAULT 0,
         parent_id INTEGER,
         created_ms INTEGER NOT NULL,
         executed_ms INTEGER,

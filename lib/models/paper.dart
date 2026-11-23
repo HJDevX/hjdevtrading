@@ -182,9 +182,15 @@ class PaperPendingOrder {
   final double? targetPct;
   final int? targetTimeMs;
 
+  // Stop-loss plan (entry BUY orders only, optional): exit when the
+  // price touches [slPrice], or [slPct]% below the fill price.
+  final double? slPrice;
+  final double? slPct;
+
   /// 'ACTIVE', 'EXECUTED', 'CANCELLED' or 'FAILED'.
   final String status;
   final bool isTarget;
+  final bool isStopLoss;
   final int? parentId;
   final int createdMs;
   final int? executedMs;
@@ -206,8 +212,11 @@ class PaperPendingOrder {
     this.targetPrice,
     this.targetPct,
     this.targetTimeMs,
+    this.slPrice,
+    this.slPct,
     this.status = 'ACTIVE',
     this.isTarget = false,
+    this.isStopLoss = false,
     this.parentId,
     required this.createdMs,
     this.executedMs,
@@ -217,6 +226,10 @@ class PaperPendingOrder {
   bool get isBuy => side == 'B';
   bool get hasTarget =>
       targetPrice != null || targetPct != null || targetTimeMs != null;
+  bool get hasStopLoss => slPrice != null || slPct != null;
+
+  /// True for an armed exit order (target or stop-loss).
+  bool get isExit => isTarget || isStopLoss;
 
   String get key => '$exchange|$token';
 
@@ -236,8 +249,11 @@ class PaperPendingOrder {
       'target_price': targetPrice,
       'target_pct': targetPct,
       'target_time_ms': targetTimeMs,
+      'sl_price': slPrice,
+      'sl_pct': slPct,
       'status': status,
       'is_target': isTarget ? 1 : 0,
+      'is_stop_loss': isStopLoss ? 1 : 0,
       'parent_id': parentId,
       'created_ms': createdMs,
       'executed_ms': executedMs,
@@ -265,8 +281,11 @@ class PaperPendingOrder {
       targetPrice: (map['target_price'] as num?)?.toDouble(),
       targetPct: (map['target_pct'] as num?)?.toDouble(),
       targetTimeMs: (map['target_time_ms'] as num?)?.toInt(),
+      slPrice: (map['sl_price'] as num?)?.toDouble(),
+      slPct: (map['sl_pct'] as num?)?.toDouble(),
       status: map['status'] as String? ?? 'ACTIVE',
       isTarget: (map['is_target'] as num?)?.toInt() == 1,
+      isStopLoss: (map['is_stop_loss'] as num?)?.toInt() == 1,
       parentId: (map['parent_id'] as num?)?.toInt(),
       createdMs: (map['created_ms'] as num?)?.toInt() ?? 0,
       executedMs: (map['executed_ms'] as num?)?.toInt(),
@@ -282,6 +301,8 @@ class PaperPendingOrder {
     double? targetPrice,
     double? targetPct,
     int? targetTimeMs,
+    double? slPrice,
+    double? slPct,
     String? status,
     int? executedMs,
     String? note,
@@ -290,6 +311,8 @@ class PaperPendingOrder {
     bool clearTargetPrice = false,
     bool clearTargetPct = false,
     bool clearTargetTime = false,
+    bool clearSlPrice = false,
+    bool clearSlPct = false,
     bool clearNote = false,
   }) {
     return PaperPendingOrder(
@@ -312,8 +335,11 @@ class PaperPendingOrder {
       targetPct: clearTargetPct ? null : (targetPct ?? this.targetPct),
       targetTimeMs:
           clearTargetTime ? null : (targetTimeMs ?? this.targetTimeMs),
+      slPrice: clearSlPrice ? null : (slPrice ?? this.slPrice),
+      slPct: clearSlPct ? null : (slPct ?? this.slPct),
       status: status ?? this.status,
       isTarget: isTarget,
+      isStopLoss: isStopLoss,
       parentId: parentId,
       createdMs: createdMs,
       executedMs: executedMs ?? this.executedMs,

@@ -17,9 +17,13 @@ import 'package:hjdev_trading/services/pending_order_engine.dart';
 /// a trade appears in Orders and Portfolio INSTANTLY. Each
 /// position's last live price is saved in local storage, so its
 /// P&L still shows correctly with the market closed.
-///  Tab 1: Orders    — the full executed trade history, BUY and
-///                     SELL both, newest first
-///  Tab 2: Portfolio — current paper holdings with live P&L and exit
+///  Tab 1: Orders    — ONLY the pending orders (price/time
+///                     triggers, armed targets and stop-losses),
+///                     each editable and cancellable
+///  Tab 2: Portfolio — current holdings with real-time P&L, the
+///                     fund breakdown, and below them the full
+///                     EXECUTED trade history (BUY and SELL, shown
+///                     faded) with booked P&L
 /// The flask icon in the app bar opens the SIMULATOR — replay a real
 /// past trading day with historical prices, for practice any time.
 class PracticeScreen extends StatefulWidget {
@@ -224,8 +228,6 @@ class _OrdersTab extends StatefulWidget {
 
 class _OrdersTabState extends State<_OrdersTab>
     with AutomaticKeepAliveClientMixin {
-  final AppDb _db = AppDb.instance;
-  List<PaperOrder> _orders = [];
   List<PaperPendingOrder> _pending = [];
   List<PaperPendingOrder> _failed = [];
   bool _loading = true;
@@ -237,26 +239,24 @@ class _OrdersTabState extends State<_OrdersTab>
   void initState() {
     super.initState();
     _load();
-    // Instant: a new paper trade reloads this list the moment it
-    // happens, even while this tab sits in the background.
-    PaperBroker.revisionNotifier.addListener(_load);
+    // Instant: pending changes (place / modify / cancel / fill)
+    // reload this list the moment they happen.
     PendingOrderEngine.pendingRevision.addListener(_load);
+    PaperBroker.revisionNotifier.addListener(_load);
   }
 
   @override
   void dispose() {
-    PaperBroker.revisionNotifier.removeListener(_load);
     PendingOrderEngine.pendingRevision.removeListener(_load);
+    PaperBroker.revisionNotifier.removeListener(_load);
     super.dispose();
   }
 
   Future<void> _load() async {
-    final orders = await _db.getPaperOrders();
     final active = await PendingOrderEngine.instance.activeOrders();
     final finished = await PendingOrderEngine.instance.recentFinished();
     if (!mounted) return;
     setState(() {
-      _orders = orders;
       _pending = active;
       _failed = finished.where((o) => o.status == 'FAILED').toList();
       _loading = false;
@@ -273,16 +273,21 @@ class _OrdersTabState extends State<_OrdersTab>
 
   String _targetText(PaperPendingOrder o) {
     if (o.isTarget) return 'Target exit';
+    if (o.isStopLoss) return 'Stop-loss exit';
+    final parts = <String>[];
     if (o.targetTimeMs != null) {
-      return 'Target: sell at ${_fmtTime(o.targetTimeMs!)}';
+      parts.add('Target: sell at ${_fmtTime(o.targetTimeMs!)}');
+    } else if (o.targetPrice != null) {
+      parts.add('Target: sell at ₹${o.targetPrice!.toStringAsFixed(2)}');
+    } else if (o.targetPct != null) {
+      parts.add('Target: sell at +${o.targetPct!.toStringAsFixed(1)}%');
     }
-    if (o.targetPrice != null) {
-      return 'Target: sell at ₹${o.targetPrice!.toStringAsFixed(2)}';
+    if (o.slPrice != null) {
+      parts.add('SL: ₹${o.slPrice!.toStringAsFixed(2)}');
+    } else if (o.slPct != null) {
+      parts.add('SL: −${o.slPct!.toStringAsFixed(1)}%');
     }
-    if (o.targetPct != null) {
-      return 'Target: sell at +${o.targetPct!.toStringAsFixed(1)}%';
-    }
-    return '';
+    return parts.join(' • ');
   }
 
   Future<void> _cancelPending(PaperPendingOrder o) async {
@@ -315,9 +320,14 @@ class _OrdersTabState extends State<_OrdersTab>
         text: o.targetPrice?.toStringAsFixed(2) ?? '');
     final tPctCtrl =
         TextEditingController(text: o.targetPct?.toString() ?? '');
+    final slPriceCtrl = TextEditingController(
+        text: o.slPrice?.toStringAsFixed(2) ?? '');
+    final slPctCtrl =
+        TextEditingController(text: o.slPct?.toString() ?? '');
     var triggerTime = o.triggerTimeMs;
     var targetTime = o.targetTimeMs;
     var clearTarget = false;
+    var clearSl = false;
 
     final saved = await showDialog<bool>(
       context: context,
@@ -352,7 +362,7 @@ class _OrdersTabState extends State<_OrdersTab>
                       setDlg(() => triggerTime = v);
                     },
                   ),
-                if (!o.isTarget) ...[
+                if (!o.isExit) ...[
                   const Divider(color: Colors.white10),
                   const Align(
                     alignment: Alignment.centerLeft,
@@ -391,6 +401,29 @@ class _OrdersTabState extends State<_OrdersTab>
                         targetTime = null;
                       }),
                       child: const Text('Remove target',
+                          style: TextStyle(
+                              color: Color(0xFFE53935), fontSize: 12)),
+                    ),
+                  ),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Stop-loss',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 12)),
+                  ),
+                  _dlgField(slPriceCtrl, 'Stop-loss price (₹)',
+                      const TextInputType.numberWithOptions(decimal: true)),
+                  _dlgField(slPctCtrl, 'or Stop-loss % loss',
+                      const TextInputType.numberWithOptions(decimal: true)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => setDlg(() {
+                        clearSl = true;
+                        slPriceCtrl.clear();
+                        slPctCtrl.clear();
+                      }),
+                      child: const Text('Remove stop-loss',
                           style: TextStyle(
                               color: Color(0xFFE53935), fontSize: 12)),
                     ),
@@ -436,7 +469,7 @@ class _OrdersTabState extends State<_OrdersTab>
       }
       updated = updated.copyWith(triggerTimeMs: triggerTime);
     }
-    if (!o.isTarget) {
+    if (!o.isExit) {
       if (clearTarget) {
         updated = updated.copyWith(
             clearTargetPrice: true,
@@ -452,6 +485,18 @@ class _OrdersTabState extends State<_OrdersTab>
           clearTargetPct: tpc == null,
           targetTimeMs: targetTime,
           clearTargetTime: targetTime == null,
+        );
+      }
+      if (clearSl) {
+        updated = updated.copyWith(clearSlPrice: true, clearSlPct: true);
+      } else {
+        final sp = double.tryParse(slPriceCtrl.text.trim());
+        final spc = double.tryParse(slPctCtrl.text.trim());
+        updated = updated.copyWith(
+          slPrice: sp,
+          clearSlPrice: sp == null,
+          slPct: spc,
+          clearSlPct: spc == null,
         );
       }
     }
@@ -499,11 +544,13 @@ class _OrdersTabState extends State<_OrdersTab>
         child: Text(
             failed
                 ? 'FAILED'
-                : o.isTarget
-                    ? 'TARGET'
-                    : buy
-                        ? 'BUY'
-                        : 'SELL',
+                : o.isStopLoss
+                    ? 'STOP-LOSS'
+                    : o.isTarget
+                        ? 'TARGET'
+                        : buy
+                            ? 'BUY'
+                            : 'SELL',
             style: TextStyle(
                 color: failed || !buy
                     ? const Color(0xFFE53935)
@@ -548,24 +595,19 @@ class _OrdersTabState extends State<_OrdersTab>
   Widget build(BuildContext context) {
     super.build(context);
     if (_loading) return const Center(child: CircularProgressIndicator());
-    final hasPending = _pending.isNotEmpty || _failed.isNotEmpty;
-    if (_orders.isEmpty && !hasPending) {
+    if (_pending.isEmpty && _failed.isEmpty) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            'No paper orders yet.\nOpen any stock in your watchlist and tap BUY (Paper) or SELL (Paper).',
+            'No pending orders.\nPlace one from any watchlist stock: Execute → At price or At time — or set a target / stop-loss on a buy.\nExecuted trades live in the Portfolio tab.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white38, fontSize: 14),
           ),
         ),
       );
     }
-    final totalRealized =
-        _orders.fold<double>(0, (sum, o) => sum + o.realizedPnl);
-    final pendingCount = _pending.length + _failed.length;
-    final itemCount =
-        1 + (hasPending ? 1 + pendingCount : 0) + _orders.length;
+    final itemCount = 1 + _pending.length + _failed.length;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
@@ -574,75 +616,22 @@ class _OrdersTabState extends State<_OrdersTab>
             const Divider(color: Colors.white10, height: 1, indent: 16),
         itemBuilder: (ctx, i) {
           if (i == 0) {
-            return ListTile(
-              title: const Text('Total booked (realized) P&L',
-                  style: TextStyle(color: Colors.white70, fontSize: 13)),
-              trailing: Text(
-                _fmtMoney(totalRealized),
-                style: TextStyle(
-                  color: totalRealized >= 0
-                      ? const Color(0xFF00C853)
-                      : const Color(0xFFE53935),
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+            return const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text('PENDING ORDERS — tap ✎ to edit, ✕ to cancel',
+                  style: TextStyle(
+                      color: Colors.orange,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.6)),
             );
           }
-          var idx = i - 1;
-          if (hasPending) {
-            if (idx == 0) {
-              return const Padding(
-                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-                child: Text('PENDING ORDERS',
-                    style: TextStyle(
-                        color: Colors.orange,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.6)),
-              );
-            }
-            idx -= 1;
-            if (idx < _pending.length) {
-              return _pendingTile(_pending[idx], failed: false);
-            }
-            idx -= _pending.length;
-            if (idx < _failed.length) {
-              return _pendingTile(_failed[idx], failed: true);
-            }
-            idx -= _failed.length;
+          final idx = i - 1;
+          if (idx < _pending.length) {
+            return _pendingTile(_pending[idx], failed: false);
           }
-          final o = _orders[idx];
-          final buy = o.isBuy;
-          return ListTile(
-            leading: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: buy
-                    ? const Color(0xFF00C853).withAlpha(35)
-                    : const Color(0xFFE53935).withAlpha(35),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(buy ? 'BUY' : 'SELL',
-                  style: TextStyle(
-                      color: buy
-                          ? const Color(0xFF00C853)
-                          : const Color(0xFFE53935),
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold)),
-            ),
-            title: Text(o.symbol,
-                style: const TextStyle(color: Colors.white, fontSize: 14)),
-            subtitle: Text(
-              '${o.qty} @ ₹${o.price.toStringAsFixed(2)} • ${_fmtTime(o.timeMs)}'
-              '${!buy && o.realizedPnl != 0 ? ' • P&L ${_fmtMoney(o.realizedPnl)}' : ''}',
-              style: const TextStyle(color: Colors.white38, fontSize: 11.5),
-            ),
-            trailing: Text(_fmtMoney(o.value),
-                style:
-                    const TextStyle(color: Colors.white70, fontSize: 13)),
-          );
+          return _pendingTile(_failed[idx - _pending.length],
+              failed: true);
         },
       ),
     );
@@ -666,6 +655,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
 
   List<PaperPosition> _positions = [];
   final Map<String, Quote> _quotesByToken = {};
+  List<PaperOrder> _history = [];
   PaperFundInfo? _fund;
   bool _loading = true;
   Timer? _timer;
@@ -749,10 +739,12 @@ class _PortfolioTabState extends State<_PortfolioTab>
   Future<void> _load() async {
     final positions = await _db.getPaperPositions();
     final fund = await PaperBroker.instance.fundInfo();
+    final history = await _db.getPaperOrders();
     if (!mounted) return;
     setState(() {
       _positions = positions;
       _fund = fund;
+      _history = history;
       _loading = false;
     });
     _refreshPrices();
@@ -816,12 +808,12 @@ class _PortfolioTabState extends State<_PortfolioTab>
   Widget build(BuildContext context) {
     super.build(context);
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_positions.isEmpty) {
+    if (_positions.isEmpty && _history.isEmpty) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
           child: Text(
-            'No paper holdings yet.\nBuy something (paper) from your watchlist and it will appear here.',
+            'No paper holdings yet.\nBuy something (paper) from your watchlist and it will appear here, with its P&L and trade history.',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.white38, fontSize: 14),
           ),
@@ -839,10 +831,13 @@ class _PortfolioTabState extends State<_PortfolioTab>
     }
     final pnl = current - invested;
 
+    final itemCount = 1 +
+        _positions.length +
+        (_history.isEmpty ? 0 : 1 + _history.length);
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
-        itemCount: _positions.length + 1,
+        itemCount: itemCount,
         separatorBuilder: (_, __) =>
             const Divider(color: Colors.white10, height: 1, indent: 16),
         itemBuilder: (ctx, i) {
@@ -881,6 +876,13 @@ class _PortfolioTabState extends State<_PortfolioTab>
                     _fundRow('Available fund',
                         _fmtMoney(_fund!.available),
                         bold: true),
+                    _fundRow(
+                      'Booked (realized) P&L',
+                      _fmtMoney(_fund!.realizedPnl),
+                      color: _fund!.realizedPnl >= 0
+                          ? const Color(0xFF00C853)
+                          : const Color(0xFFE53935),
+                    ),
                     const Padding(
                       padding: EdgeInsets.only(top: 4),
                       child: Text(
@@ -892,6 +894,22 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 ],
               ),
             );
+          }
+          if (i > _positions.length) {
+            // Executed-trade history section (shown faded).
+            final hIdx = i - _positions.length - 1;
+            if (hIdx == 0) {
+              return const Padding(
+                padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
+                child: Text('EXECUTED TRADES',
+                    style: TextStyle(
+                        color: Colors.white38,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.6)),
+              );
+            }
+            return _historyTile(_history[hIdx - 1]);
           }
           final p = _positions[i - 1];
           final q = p.token != null ? _quotesByToken[p.token!] : null;
@@ -961,7 +979,8 @@ class _PortfolioTabState extends State<_PortfolioTab>
     );
   }
 
-  Widget _fundRow(String label, String value, {bool bold = false}) {
+  Widget _fundRow(String label, String value,
+      {bool bold = false, Color? color}) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -971,10 +990,45 @@ class _PortfolioTabState extends State<_PortfolioTab>
               style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
           Text(value,
               style: TextStyle(
-                  color: Colors.white,
+                  color: color ?? Colors.white,
                   fontSize: 12.5,
                   fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
         ],
+      ),
+    );
+  }
+
+  /// One executed trade in the history section — deliberately
+  /// FADED: these are done deals, shown for the record and their
+  /// P&L, under the live holdings.
+  Widget _historyTile(PaperOrder o) {
+    final buy = o.isBuy;
+    final chipColor =
+        buy ? const Color(0xFF00C853) : const Color(0xFFE53935);
+    return Opacity(
+      opacity: 0.55,
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          decoration: BoxDecoration(
+            color: chipColor.withAlpha(35),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(buy ? 'BUY' : 'SELL',
+              style: TextStyle(
+                  color: chipColor,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold)),
+        ),
+        title: Text(o.symbol,
+            style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+        subtitle: Text(
+          '${o.qty} @ ₹${o.price.toStringAsFixed(2)} • ${_fmtTime(o.timeMs)}'
+          '${!buy && o.realizedPnl != 0 ? ' • P&L ${_fmtMoney(o.realizedPnl)}' : ''}',
+          style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+        ),
+        trailing: Text(_fmtMoney(o.value),
+            style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
       ),
     );
   }

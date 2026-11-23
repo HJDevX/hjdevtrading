@@ -481,6 +481,13 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
               green: true);
           return null;
         },
+        onArmExits: (template, fillPrice) async {
+          await PendingOrderEngine.instance
+              .armExitsForImmediateBuy(template, fillPrice);
+          _snack(
+              'Target / stop-loss armed for ${template.symbol} — see Practice → Orders',
+              green: true);
+        },
       ),
     );
   }
@@ -864,12 +871,15 @@ class _ItemSheet extends StatefulWidget {
   final Future<String?> Function(String side, int qty, double price)
       onTrade;
   final Future<String?> Function(PaperPendingOrder order) onPlacePending;
+  final Future<void> Function(PaperPendingOrder template, double fillPrice)
+      onArmExits;
 
   const _ItemSheet({
     required this.item,
     required this.quoteProvider,
     required this.onTrade,
     required this.onPlacePending,
+    required this.onArmExits,
   });
 
   @override
@@ -898,6 +908,10 @@ class _ItemSheetState extends State<_ItemSheet> {
   double? _targetPrice;
   double? _targetPct;
   TimeOfDay? _targetTime;
+  // Optional stop-loss for BUY entries (any Execute mode): an exit
+  // price, or a % loss below the fill price. Price wins if both set.
+  double? _slPrice;
+  double? _slPct;
 
   bool get _isDeriv =>
       widget.item.instrumentType == 'FUT' ||
@@ -980,13 +994,78 @@ class _ItemSheetState extends State<_ItemSheet> {
     setState(() => _qty = value);
   }
 
+  bool _validateExitFields() {
+    if (_targetType == 'PRICE') {
+      final ok = (_targetPrice != null && _targetPrice! > 0) ||
+          (_targetPct != null && _targetPct! > 0);
+      if (!ok) {
+        _sheetSnack('Set a target price or % — or choose No target');
+        return false;
+      }
+    }
+    if (_targetType == 'TIME') {
+      if (_targetTime == null) {
+        _sheetSnack('Pick the target time — or choose No target');
+        return false;
+      }
+      if (_msFor(_targetTime!) <= DateTime.now().millisecondsSinceEpoch) {
+        _sheetSnack('Target time has already passed today');
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// After an instant (Execute Now) BUY fills, arm its target /
+  /// stop-loss exits with the engine.
+  Future<void> _armExitsAfterFill() async {
+    final hasTarget = _targetType != 'NONE';
+    final hasSl = (_slPrice != null && _slPrice! > 0) ||
+        (_slPct != null && _slPct! > 0);
+    if (!hasTarget && !hasSl) return;
+    final item = widget.item;
+    double? tPrice, tPct;
+    int? tTime;
+    if (hasTarget) {
+      if (_targetType == 'PRICE') {
+        if (_targetPrice != null && _targetPrice! > 0) {
+          tPrice = _targetPrice;
+        } else {
+          tPct = _targetPct;
+        }
+      } else {
+        tTime = _msFor(_targetTime!);
+      }
+    }
+    final template = PaperPendingOrder(
+      symbol: item.symbol,
+      exchange: KotakApi.normalizeSegment(item.exchange),
+      token: item.token,
+      displayName: item.displayName,
+      instrumentType: item.instrumentType,
+      lotSize: item.lotSize,
+      side: 'B',
+      qty: _qty,
+      triggerType: 'NOW',
+      targetPrice: tPrice,
+      targetPct: tPct,
+      targetTimeMs: tTime,
+      slPrice: (_slPrice != null && _slPrice! > 0) ? _slPrice : null,
+      slPct: (_slPct != null && _slPct! > 0) ? _slPct : null,
+      createdMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    await widget.onArmExits(template, _quote?.ltp ?? 0);
+  }
+
   Future<void> _trade(String side) async {
     if (_trading) return;
+    if (side == 'B' && !_validateExitFields()) return;
     setState(() => _trading = true);
     final error = await widget.onTrade(side, _qty, _quote?.ltp ?? 0);
     if (!mounted) return;
     if (error == null) {
-      Navigator.of(context).pop();
+      if (side == 'B') await _armExitsAfterFill();
+      if (mounted) Navigator.of(context).pop();
     } else {
       setState(() => _trading = false);
       _loadFund(); // available fund may have changed
@@ -1120,6 +1199,11 @@ class _ItemSheetState extends State<_ItemSheet> {
       targetPrice: tPrice,
       targetPct: tPct,
       targetTimeMs: tTime,
+      slPrice: (side == 'B' && _slPrice != null && _slPrice! > 0)
+          ? _slPrice
+          : null,
+      slPct:
+          (side == 'B' && _slPct != null && _slPct! > 0) ? _slPct : null,
       createdMs: nowMs,
     );
     final error = await widget.onPlacePending(order);
@@ -1425,67 +1509,92 @@ class _ItemSheetState extends State<_ItemSheet> {
                 }
               },
             ),
-          if (_orderType != 'NOW') ...[
-            const SizedBox(height: 8),
-            const Text('Target — exit after BUY fills',
-                style: TextStyle(color: Colors.white70, fontSize: 14)),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                _chip('No target', _targetType == 'NONE',
-                    () => setState(() => _targetType = 'NONE')),
-                const SizedBox(width: 8),
-                _chip('Target price', _targetType == 'PRICE',
-                    () => setState(() => _targetType = 'PRICE')),
-                const SizedBox(width: 8),
-                _chip('Target time', _targetType == 'TIME',
-                    () => setState(() => _targetType = 'TIME')),
-              ],
-            ),
-            if (_targetType == 'PRICE') ...[
-              _tapRow(
-                'Target price',
-                _targetPrice != null
-                    ? '₹${_targetPrice!.toStringAsFixed(2)}'
-                    : 'Set price',
-                () => _editNumber(
-                  title: 'Target price (₹)',
-                  initial: _targetPrice,
-                  onSet: (v) => setState(() => _targetPrice = v),
-                ),
-              ),
-              _tapRow(
-                'or Target % gain',
-                _targetPct != null
-                    ? '+${_targetPct!.toStringAsFixed(1)}%'
-                    : 'Set %',
-                () => _editNumber(
-                  title: 'Target % gain',
-                  initial: _targetPct,
-                  onSet: (v) => setState(() => _targetPct = v),
-                ),
-              ),
+          const SizedBox(height: 12),
+          const Text('Target — exit after BUY fills',
+              style: TextStyle(color: Colors.white70, fontSize: 14)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              _chip('No target', _targetType == 'NONE',
+                  () => setState(() => _targetType = 'NONE')),
+              const SizedBox(width: 8),
+              _chip('Target price', _targetType == 'PRICE',
+                  () => setState(() => _targetType = 'PRICE')),
+              const SizedBox(width: 8),
+              _chip('Target time', _targetType == 'TIME',
+                  () => setState(() => _targetType = 'TIME')),
             ],
-            if (_targetType == 'TIME')
-              _tapRow(
-                'Exit today at',
-                _fmtTod(_targetTime),
-                () async {
-                  final picked = await showTimePicker(
-                    context: context,
-                    initialTime: _targetTime ?? TimeOfDay.now(),
-                  );
-                  if (picked != null) {
-                    setState(() => _targetTime = picked);
-                  }
-                },
+          ),
+          if (_targetType == 'PRICE') ...[
+            _tapRow(
+              'Target price',
+              _targetPrice != null
+                  ? '₹${_targetPrice!.toStringAsFixed(2)}'
+                  : 'Set price',
+              () => _editNumber(
+                title: 'Target price (₹)',
+                initial: _targetPrice,
+                onSet: (v) => setState(() => _targetPrice = v),
               ),
-            const Text(
-              'Targets apply to BUY orders: when the buy fills, the '
-              'target exit is armed automatically.',
-              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+            _tapRow(
+              'or Target % gain',
+              _targetPct != null
+                  ? '+${_targetPct!.toStringAsFixed(1)}%'
+                  : 'Set %',
+              () => _editNumber(
+                title: 'Target % gain',
+                initial: _targetPct,
+                onSet: (v) => setState(() => _targetPct = v),
+              ),
             ),
           ],
+          if (_targetType == 'TIME')
+            _tapRow(
+              'Exit today at',
+              _fmtTod(_targetTime),
+              () async {
+                final picked = await showTimePicker(
+                  context: context,
+                  initialTime: _targetTime ?? TimeOfDay.now(),
+                );
+                if (picked != null) {
+                  setState(() => _targetTime = picked);
+                }
+              },
+            ),
+          const SizedBox(height: 8),
+          const Text('Stop-loss (optional, for BUY)',
+              style: TextStyle(color: Colors.white70, fontSize: 14)),
+          _tapRow(
+            'Stop-loss price',
+            _slPrice != null
+                ? '₹${_slPrice!.toStringAsFixed(2)}'
+                : 'Not set',
+            () => _editNumber(
+              title: 'Stop-loss price (₹)',
+              initial: _slPrice,
+              onSet: (v) => setState(() => _slPrice = v),
+            ),
+          ),
+          _tapRow(
+            'or Stop-loss % loss',
+            _slPct != null
+                ? '−${_slPct!.toStringAsFixed(1)}%'
+                : 'Not set',
+            () => _editNumber(
+              title: 'Stop-loss % loss',
+              initial: _slPct,
+              onSet: (v) => setState(() => _slPct = v),
+            ),
+          ),
+          const Text(
+            'Target and stop-loss apply to BUY orders in every mode '
+            '(Now, At price, At time): when the buy fills, the exits '
+            'are armed automatically, and whichever fires first '
+            'cancels the other.',
+            style: TextStyle(color: Colors.white38, fontSize: 11),
+          ),
           const SizedBox(height: 10),
           Row(
             children: [

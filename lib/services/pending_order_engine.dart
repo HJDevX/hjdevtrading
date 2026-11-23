@@ -17,8 +17,11 @@ import 'package:hjdev_trading/services/paper_broker.dart';
 ///  - TIME orders fill at the exact clock time, at the then-live
 ///    price (a time that passed while the app was closed fires on
 ///    the next app start).
-///  - When a BUY entry fills and it carries a TARGET, the target is
-///    armed as its own pending SELL (price, % or exact time).
+///  - When a BUY fills (a pending entry, or an instant Execute-Now
+///    buy via armExitsForImmediateBuy) and it carries a TARGET
+///    and/or a STOP-LOSS, each is armed as its own pending SELL.
+///    When one exit fires and flattens the position, the other is
+///    cancelled automatically.
 ///  - A fill the broker refuses (no holdings to sell, not enough
 ///    virtual fund) marks the order FAILED with the reason kept.
 ///
@@ -256,20 +259,29 @@ class PendingOrderEngine {
     } else {
       debugPrint('PendingEngine: order ${o.id} filled '
           '${o.side} ${o.qty} ${o.symbol} @ $fillPrice');
-      // A filled BUY entry arms its TARGET as a pending SELL.
-      if (o.isBuy && !o.isTarget && o.hasTarget) {
-        await _armTarget(o, fillPrice);
+      // A filled BUY entry arms its TARGET and STOP-LOSS exits.
+      if (o.isBuy && !o.isExit && (o.hasTarget || o.hasStopLoss)) {
+        await _armExits(o, fillPrice);
       }
     }
     await _reload();
     _bump();
   }
 
-  Future<void> _armTarget(PaperPendingOrder entry, double fillPrice) async {
+  /// Arm the exit orders for a filled BUY: the TARGET (price, % or
+  /// exact time) and/or the STOP-LOSS (price or % below the fill),
+  /// each as its own pending SELL. %-based exits need a real fill
+  /// price; without one they are skipped.
+  Future<void> _armExits(PaperPendingOrder entry, double fillPrice) async {
     final now = DateTime.now().millisecondsSinceEpoch;
-    PaperPendingOrder target;
-    if (entry.targetTimeMs != null) {
-      target = PaperPendingOrder(
+    PaperPendingOrder exitBase({
+      required String triggerType,
+      double? triggerPrice,
+      int? triggerTimeMs,
+      bool isTarget = false,
+      bool isStopLoss = false,
+    }) {
+      return PaperPendingOrder(
         symbol: entry.symbol,
         exchange: entry.exchange,
         token: entry.token,
@@ -278,43 +290,79 @@ class PendingOrderEngine {
         lotSize: entry.lotSize,
         side: 'S',
         qty: entry.qty,
-        triggerType: 'TIME',
-        triggerTimeMs: entry.targetTimeMs,
+        triggerType: triggerType,
+        triggerPrice: triggerPrice,
+        triggerTimeMs: triggerTimeMs,
         status: 'ACTIVE',
-        isTarget: true,
-        parentId: entry.id,
-        createdMs: now,
-      );
-    } else {
-      final price = entry.targetPrice ??
-          (entry.targetPct != null
-              ? fillPrice * (1 + entry.targetPct! / 100)
-              : null);
-      if (price == null) return;
-      target = PaperPendingOrder(
-        symbol: entry.symbol,
-        exchange: entry.exchange,
-        token: entry.token,
-        displayName: entry.displayName,
-        instrumentType: entry.instrumentType,
-        lotSize: entry.lotSize,
-        side: 'S',
-        qty: entry.qty,
-        triggerType: 'PRICE',
-        triggerPrice: price,
-        status: 'ACTIVE',
-        isTarget: true,
+        isTarget: isTarget,
+        isStopLoss: isStopLoss,
         parentId: entry.id,
         createdMs: now,
       );
     }
-    await _db.insertPaperPendingOrder(target);
-    debugPrint('PendingEngine: target armed for ${entry.symbol} '
-        '(${target.triggerType} ${target.triggerPrice ?? target.triggerTimeMs})');
+
+    if (entry.hasTarget) {
+      PaperPendingOrder? target;
+      if (entry.targetTimeMs != null) {
+        target = exitBase(
+          triggerType: 'TIME',
+          triggerTimeMs: entry.targetTimeMs,
+          isTarget: true,
+        );
+      } else {
+        final price = entry.targetPrice ??
+            (entry.targetPct != null && fillPrice > 0
+                ? fillPrice * (1 + entry.targetPct! / 100)
+                : null);
+        if (price != null) {
+          target = exitBase(
+            triggerType: 'PRICE',
+            triggerPrice: price,
+            isTarget: true,
+          );
+        }
+      }
+      if (target != null) {
+        await _db.insertPaperPendingOrder(target);
+        debugPrint('PendingEngine: TARGET armed for ${entry.symbol} '
+            '(${target.triggerType} '
+            '${target.triggerPrice ?? target.triggerTimeMs})');
+      }
+    }
+
+    if (entry.hasStopLoss) {
+      final sl = entry.slPrice ??
+          (entry.slPct != null && fillPrice > 0
+              ? fillPrice * (1 - entry.slPct! / 100)
+              : null);
+      if (sl != null && sl > 0) {
+        await _db.insertPaperPendingOrder(exitBase(
+          triggerType: 'PRICE',
+          triggerPrice: sl,
+          isStopLoss: true,
+        ));
+        debugPrint(
+            'PendingEngine: STOP-LOSS armed for ${entry.symbol} @ $sl');
+      }
+    }
   }
 
-  /// If a position was fully sold by hand, its armed target exits
-  /// are orphans — cancel them instead of letting them fail later.
+  /// Arm target / stop-loss exits for a buy that ALREADY filled
+  /// instantly (Execute Now in the dialogue). [template] carries the
+  /// instrument, qty and the target/SL plan; [fillPrice] is the
+  /// price the buy filled at (needed for %-based exits).
+  Future<void> armExitsForImmediateBuy(
+      PaperPendingOrder template, double fillPrice) async {
+    if (!template.hasTarget && !template.hasStopLoss) return;
+    await _armExits(template, fillPrice);
+    await _reload();
+    _bump();
+  }
+
+  /// If a position was fully sold (by hand, or by one of its own
+  /// exits firing), its remaining armed exits — target AND
+  /// stop-loss — are orphans: cancel them instead of letting them
+  /// fail later.
   Future<void> _cancelOrphanTargets() async {
     final positions = await _db.getPaperPositions();
     final heldKeys = positions
@@ -323,7 +371,7 @@ class PendingOrderEngine {
         .toSet();
     var changed = false;
     for (final o in List<PaperPendingOrder>.from(_active)) {
-      if (o.isTarget && !heldKeys.contains(_keyFor(o))) {
+      if (o.isExit && !heldKeys.contains(_keyFor(o))) {
         await _db.updatePaperPendingOrder(o.copyWith(
           status: 'CANCELLED',
           note: 'Position already sold',
