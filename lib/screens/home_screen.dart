@@ -4,6 +4,7 @@ import 'package:hjdev_trading/screens/practice/practice_screen.dart';
 import 'package:hjdev_trading/screens/watchlists/watchlists_screen.dart';
 import 'package:hjdev_trading/services/index_feed_service.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
+import 'package:hjdev_trading/services/pending_order_engine.dart';
 
 /// App shell: restores today's session, then shows three tabs —
 /// Watchlist, Practice (paper trading) and Login.
@@ -23,6 +24,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _checkSession();
+    // The pending-order engine watches price/time triggers and
+    // armed targets for as long as the app is open.
+    PendingOrderEngine.instance.start();
   }
 
   Future<void> _checkSession() async {

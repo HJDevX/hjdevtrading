@@ -5,8 +5,10 @@ import 'package:hjdev_trading/models/paper.dart';
 import 'package:hjdev_trading/models/quote.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
 import 'package:hjdev_trading/screens/practice/simulator_screen.dart';
+import 'package:hjdev_trading/services/index_feed_service.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
 import 'package:hjdev_trading/services/paper_broker.dart';
+import 'package:hjdev_trading/services/pending_order_engine.dart';
 
 /// PRACTICE page — paper trading only, against a VIRTUAL FUND
 /// (₹1,00,000 starting, EDITABLE from the pencil button; equity buys
@@ -224,6 +226,8 @@ class _OrdersTabState extends State<_OrdersTab>
     with AutomaticKeepAliveClientMixin {
   final AppDb _db = AppDb.instance;
   List<PaperOrder> _orders = [];
+  List<PaperPendingOrder> _pending = [];
+  List<PaperPendingOrder> _failed = [];
   bool _loading = true;
 
   @override
@@ -236,28 +240,316 @@ class _OrdersTabState extends State<_OrdersTab>
     // Instant: a new paper trade reloads this list the moment it
     // happens, even while this tab sits in the background.
     PaperBroker.revisionNotifier.addListener(_load);
+    PendingOrderEngine.pendingRevision.addListener(_load);
   }
 
   @override
   void dispose() {
     PaperBroker.revisionNotifier.removeListener(_load);
+    PendingOrderEngine.pendingRevision.removeListener(_load);
     super.dispose();
   }
 
   Future<void> _load() async {
     final orders = await _db.getPaperOrders();
+    final active = await PendingOrderEngine.instance.activeOrders();
+    final finished = await PendingOrderEngine.instance.recentFinished();
     if (!mounted) return;
     setState(() {
       _orders = orders;
+      _pending = active;
+      _failed = finished.where((o) => o.status == 'FAILED').toList();
       _loading = false;
     });
+  }
+
+  String _triggerText(PaperPendingOrder o) {
+    if (o.triggerType == 'TIME' && o.triggerTimeMs != null) {
+      return '${o.isBuy ? 'Buy' : 'Sell'} at ${_fmtTime(o.triggerTimeMs!)}';
+    }
+    return '${o.isBuy ? 'Buy' : 'Sell'} when price touches '
+        '₹${(o.triggerPrice ?? 0).toStringAsFixed(2)}';
+  }
+
+  String _targetText(PaperPendingOrder o) {
+    if (o.isTarget) return 'Target exit';
+    if (o.targetTimeMs != null) {
+      return 'Target: sell at ${_fmtTime(o.targetTimeMs!)}';
+    }
+    if (o.targetPrice != null) {
+      return 'Target: sell at ₹${o.targetPrice!.toStringAsFixed(2)}';
+    }
+    if (o.targetPct != null) {
+      return 'Target: sell at +${o.targetPct!.toStringAsFixed(1)}%';
+    }
+    return '';
+  }
+
+  Future<void> _cancelPending(PaperPendingOrder o) async {
+    await PendingOrderEngine.instance.cancel(o);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Pending order cancelled: ${o.symbol}'),
+        backgroundColor: Colors.grey.shade800));
+  }
+
+  Future<int?> _pickTimeMs(int? currentMs) async {
+    final now = DateTime.now();
+    final initial = currentMs != null
+        ? TimeOfDay.fromDateTime(
+            DateTime.fromMillisecondsSinceEpoch(currentMs))
+        : TimeOfDay.now();
+    final picked =
+        await showTimePicker(context: context, initialTime: initial);
+    if (picked == null) return currentMs;
+    return DateTime(now.year, now.month, now.day, picked.hour,
+            picked.minute)
+        .millisecondsSinceEpoch;
+  }
+
+  Future<void> _modifyPending(PaperPendingOrder o) async {
+    final qtyCtrl = TextEditingController(text: '${o.qty}');
+    final priceCtrl = TextEditingController(
+        text: o.triggerPrice?.toStringAsFixed(2) ?? '');
+    final tPriceCtrl = TextEditingController(
+        text: o.targetPrice?.toStringAsFixed(2) ?? '');
+    final tPctCtrl =
+        TextEditingController(text: o.targetPct?.toString() ?? '');
+    var triggerTime = o.triggerTimeMs;
+    var targetTime = o.targetTimeMs;
+    var clearTarget = false;
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          backgroundColor: const Color(0xFF161B22),
+          title: Text('Modify ${o.symbol}',
+              style: const TextStyle(color: Colors.white, fontSize: 16)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _dlgField(qtyCtrl, 'Quantity', TextInputType.number),
+                if (o.triggerType == 'PRICE')
+                  _dlgField(priceCtrl, 'Trigger price (₹)',
+                      const TextInputType.numberWithOptions(decimal: true)),
+                if (o.triggerType == 'TIME')
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Trigger time',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 13)),
+                    subtitle: Text(
+                        triggerTime != null
+                            ? _fmtTime(triggerTime!)
+                            : 'Not set',
+                        style: const TextStyle(color: Colors.white)),
+                    trailing: const Icon(Icons.access_time,
+                        color: Colors.white54),
+                    onTap: () async {
+                      final v = await _pickTimeMs(triggerTime);
+                      setDlg(() => triggerTime = v);
+                    },
+                  ),
+                if (!o.isTarget) ...[
+                  const Divider(color: Colors.white10),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text('Target (exit after fill)',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 12)),
+                  ),
+                  _dlgField(tPriceCtrl, 'Target price (₹)',
+                      const TextInputType.numberWithOptions(decimal: true)),
+                  _dlgField(tPctCtrl, 'or Target % gain',
+                      const TextInputType.numberWithOptions(decimal: true)),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('or Target time',
+                        style:
+                            TextStyle(color: Colors.white54, fontSize: 13)),
+                    subtitle: Text(
+                        targetTime != null
+                            ? _fmtTime(targetTime!)
+                            : 'Not set',
+                        style: const TextStyle(color: Colors.white)),
+                    trailing: const Icon(Icons.access_time,
+                        color: Colors.white54),
+                    onTap: () async {
+                      final v = await _pickTimeMs(targetTime);
+                      setDlg(() => targetTime = v);
+                    },
+                  ),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () => setDlg(() {
+                        clearTarget = true;
+                        tPriceCtrl.clear();
+                        tPctCtrl.clear();
+                        targetTime = null;
+                      }),
+                      child: const Text('Remove target',
+                          style: TextStyle(
+                              color: Color(0xFFE53935), fontSize: 12)),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Cancel')),
+            TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Save')),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+
+    final qty = int.tryParse(qtyCtrl.text.trim()) ?? 0;
+    if (qty <= 0) {
+      _pendingSnack('Quantity must be more than 0');
+      return;
+    }
+    if (o.lotSize != null && o.lotSize! > 1 && qty % o.lotSize! != 0) {
+      _pendingSnack('Quantity must be in lots of ${o.lotSize}');
+      return;
+    }
+    var updated = o.copyWith(qty: qty);
+    if (o.triggerType == 'PRICE') {
+      final p = double.tryParse(priceCtrl.text.trim());
+      if (p == null || p <= 0) {
+        _pendingSnack('Trigger price must be more than 0');
+        return;
+      }
+      updated = updated.copyWith(triggerPrice: p);
+    } else {
+      if (triggerTime == null) {
+        _pendingSnack('Pick a trigger time');
+        return;
+      }
+      updated = updated.copyWith(triggerTimeMs: triggerTime);
+    }
+    if (!o.isTarget) {
+      if (clearTarget) {
+        updated = updated.copyWith(
+            clearTargetPrice: true,
+            clearTargetPct: true,
+            clearTargetTime: true);
+      } else {
+        final tp = double.tryParse(tPriceCtrl.text.trim());
+        final tpc = double.tryParse(tPctCtrl.text.trim());
+        updated = updated.copyWith(
+          targetPrice: tp,
+          clearTargetPrice: tp == null,
+          targetPct: tpc,
+          clearTargetPct: tpc == null,
+          targetTimeMs: targetTime,
+          clearTargetTime: targetTime == null,
+        );
+      }
+    }
+    await PendingOrderEngine.instance.modify(updated);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Pending order updated: ${o.symbol}'),
+        backgroundColor: Colors.green.shade700));
+  }
+
+  void _pendingSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.red.shade700));
+  }
+
+  Widget _dlgField(
+      TextEditingController ctrl, String label, TextInputType type) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: TextField(
+        controller: ctrl,
+        keyboardType: type,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white54, fontSize: 13),
+        ),
+      ),
+    );
+  }
+
+  Widget _pendingTile(PaperPendingOrder o, {required bool failed}) {
+    final buy = o.isBuy;
+    return ListTile(
+      leading: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: failed
+              ? const Color(0xFFE53935).withAlpha(35)
+              : buy
+                  ? const Color(0xFF00C853).withAlpha(35)
+                  : const Color(0xFFE53935).withAlpha(35),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+            failed
+                ? 'FAILED'
+                : o.isTarget
+                    ? 'TARGET'
+                    : buy
+                        ? 'BUY'
+                        : 'SELL',
+            style: TextStyle(
+                color: failed || !buy
+                    ? const Color(0xFFE53935)
+                    : const Color(0xFF00C853),
+                fontSize: 11,
+                fontWeight: FontWeight.bold)),
+      ),
+      title: Text(o.symbol,
+          style: const TextStyle(color: Colors.white, fontSize: 14)),
+      subtitle: Text(
+        failed
+            ? (o.note ?? 'Could not execute')
+            : '${o.qty} qty • ${_triggerText(o)}'
+                '${_targetText(o).isNotEmpty ? '\n${_targetText(o)}' : ''}',
+        style: TextStyle(
+            color: failed ? const Color(0xFFE53935) : Colors.white38,
+            fontSize: 11.5),
+      ),
+      trailing: failed
+          ? null
+          : Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Modify',
+                  icon: const Icon(Icons.edit_outlined,
+                      color: Colors.white70, size: 20),
+                  onPressed: () => _modifyPending(o),
+                ),
+                IconButton(
+                  tooltip: 'Cancel order',
+                  icon: const Icon(Icons.close,
+                      color: Color(0xFFE53935), size: 20),
+                  onPressed: () => _cancelPending(o),
+                ),
+              ],
+            ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     super.build(context);
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_orders.isEmpty) {
+    final hasPending = _pending.isNotEmpty || _failed.isNotEmpty;
+    if (_orders.isEmpty && !hasPending) {
       return const Center(
         child: Padding(
           padding: EdgeInsets.all(32),
@@ -271,10 +563,13 @@ class _OrdersTabState extends State<_OrdersTab>
     }
     final totalRealized =
         _orders.fold<double>(0, (sum, o) => sum + o.realizedPnl);
+    final pendingCount = _pending.length + _failed.length;
+    final itemCount =
+        1 + (hasPending ? 1 + pendingCount : 0) + _orders.length;
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.separated(
-        itemCount: _orders.length + 1,
+        itemCount: itemCount,
         separatorBuilder: (_, __) =>
             const Divider(color: Colors.white10, height: 1, indent: 16),
         itemBuilder: (ctx, i) {
@@ -294,7 +589,30 @@ class _OrdersTabState extends State<_OrdersTab>
               ),
             );
           }
-          final o = _orders[i - 1];
+          var idx = i - 1;
+          if (hasPending) {
+            if (idx == 0) {
+              return const Padding(
+                padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                child: Text('PENDING ORDERS',
+                    style: TextStyle(
+                        color: Colors.orange,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 0.6)),
+              );
+            }
+            idx -= 1;
+            if (idx < _pending.length) {
+              return _pendingTile(_pending[idx], failed: false);
+            }
+            idx -= _pending.length;
+            if (idx < _failed.length) {
+              return _pendingTile(_failed[idx], failed: true);
+            }
+            idx -= _failed.length;
+          }
+          final o = _orders[idx];
           final buy = o.isBuy;
           return ListTile(
             leading: Container(
@@ -344,12 +662,16 @@ class _PortfolioTabState extends State<_PortfolioTab>
     with AutomaticKeepAliveClientMixin {
   final AppDb _db = AppDb.instance;
   final KotakApi _api = KotakApi.instance;
+  final IndexFeedService _feed = IndexFeedService.instance;
 
   List<PaperPosition> _positions = [];
   final Map<String, Quote> _quotesByToken = {};
   PaperFundInfo? _fund;
   bool _loading = true;
   Timer? _timer;
+  StreamSubscription<Quote>? _tickSub;
+  final List<Quote> _pendingTicks = [];
+  Timer? _tickFlushTimer;
 
   @override
   bool get wantKeepAlive => true;
@@ -361,6 +683,16 @@ class _PortfolioTabState extends State<_PortfolioTab>
     // Instant: a new paper trade reloads holdings the moment it
     // happens, even while this tab sits in the background.
     PaperBroker.revisionNotifier.addListener(_load);
+    // REAL-TIME P&L: the same live feed ticks that move the
+    // watchlist rows update this tab's prices (batched at 100 ms,
+    // exactly like the watchlist). The pending-order engine keeps
+    // every position subscribed on the feed. The 3 s REST poll
+    // below is only a fallback while the feed is down.
+    _tickSub = _feed.ticks.listen((quote) {
+      _pendingTicks.add(quote);
+      _tickFlushTimer ??=
+          Timer(const Duration(milliseconds: 100), _flushTicks);
+    });
     _timer = Timer.periodic(
         const Duration(seconds: 3), (_) => _refreshPrices());
   }
@@ -368,8 +700,50 @@ class _PortfolioTabState extends State<_PortfolioTab>
   @override
   void dispose() {
     PaperBroker.revisionNotifier.removeListener(_load);
+    _tickSub?.cancel();
+    _tickFlushTimer?.cancel();
     _timer?.cancel();
     super.dispose();
+  }
+
+  /// Apply collected feed ticks to the matching positions.
+  void _flushTicks() {
+    _tickFlushTimer = null;
+    if (!mounted || _pendingTicks.isEmpty) return;
+    final ticks = List<Quote>.from(_pendingTicks);
+    _pendingTicks.clear();
+    setState(() {
+      for (final quote in ticks) {
+        if (quote.token == null) continue;
+        for (var i = 0; i < _positions.length; i++) {
+          final p = _positions[i];
+          if (p.token != quote.token) continue;
+          if (KotakApi.normalizeSegment(p.exchange) != quote.exchange) {
+            continue;
+          }
+          final old = _quotesByToken[p.token!];
+          _quotesByToken[p.token!] = old == null
+              ? quote
+              : Quote(
+                  symbol: old.symbol,
+                  exchange: old.exchange,
+                  token: old.token,
+                  ltp: quote.ltp,
+                  open: old.open,
+                  high: old.high,
+                  low: old.low,
+                  prevClose:
+                      old.prevClose > 0 ? old.prevClose : quote.prevClose,
+                  volume: old.volume,
+                  changePct: quote.changePct,
+                );
+          if (quote.ltp > 0 && quote.ltp != p.lastPrice) {
+            _positions[i] = p.copyWith(lastPrice: quote.ltp);
+            PaperBroker.instance.savePositionLastPrice(p, quote.ltp);
+          }
+        }
+      }
+    });
   }
 
   Future<void> _load() async {
@@ -386,6 +760,9 @@ class _PortfolioTabState extends State<_PortfolioTab>
 
   Future<void> _refreshPrices() async {
     if (!mounted || _positions.isEmpty) return;
+    // While the live feed is connected, ticks drive the prices —
+    // don't compete with REST polls.
+    if (_feed.state == IndexFeedState.connected) return;
     final items = _positions
         .map((p) => PaperBroker.instance.positionAsItem(p))
         .toList();

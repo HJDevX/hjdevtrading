@@ -13,6 +13,8 @@ import 'package:hjdev_trading/models/watchlist.dart';
 ///  - paper_orders              : practice orders placed from watchlist
 ///  - paper_positions           : practice holdings
 ///  - paper_account             : the virtual fund (starting capital)
+///  - paper_pending_orders      : price/time-triggered paper orders
+///                                and their armed target exits
 ///  - sim_orders / sim_positions: legacy SIMULATOR tables (old fake-price
 ///    simulator) — orphaned by the replay simulator, kept harmless
 class AppDb {
@@ -33,7 +35,7 @@ class AppDb {
 
     return await openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -45,6 +47,7 @@ class AppDb {
     await _createPaperTables(db);
     await _createSimTables(db);
     await _createPaperAccountTable(db);
+    await _createPendingOrdersTable(db);
   }
 
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -83,6 +86,9 @@ class AppDb {
       } catch (_) {
         // Column already exists — fine.
       }
+    }
+    if (oldVersion < 7) {
+      await _createPendingOrdersTable(db);
     }
   }
 
@@ -418,6 +424,63 @@ class AppDb {
     if (rows.isEmpty) return 0;
     final v = rows.first['t'];
     return v is num ? v.toDouble() : 0;
+  }
+
+  // ---------------- Paper pending orders ----------------
+  // Orders placed with a PRICE or TIME trigger (plus armed target
+  // exits) that the PendingOrderEngine watches and fills.
+
+  Future<void> _createPendingOrdersTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS paper_pending_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        exchange TEXT NOT NULL DEFAULT 'nse_cm',
+        token TEXT,
+        display_name TEXT,
+        instrument_type TEXT,
+        lot_size INTEGER,
+        side TEXT NOT NULL,
+        qty INTEGER NOT NULL,
+        trigger_type TEXT NOT NULL,
+        trigger_price REAL,
+        trigger_time_ms INTEGER,
+        target_price REAL,
+        target_pct REAL,
+        target_time_ms INTEGER,
+        status TEXT NOT NULL DEFAULT 'ACTIVE',
+        is_target INTEGER NOT NULL DEFAULT 0,
+        parent_id INTEGER,
+        created_ms INTEGER NOT NULL,
+        executed_ms INTEGER,
+        note TEXT
+      )
+    ''');
+  }
+
+  Future<int> insertPaperPendingOrder(PaperPendingOrder o) async {
+    final db = await instance.database;
+    return await db.insert('paper_pending_orders', o.toMap());
+  }
+
+  /// All pending orders, newest first; pass [status] to filter
+  /// (e.g. 'ACTIVE').
+  Future<List<PaperPendingOrder>> getPaperPendingOrders(
+      {String? status}) async {
+    final db = await instance.database;
+    final rows = await db.query(
+      'paper_pending_orders',
+      where: status != null ? 'status = ?' : null,
+      whereArgs: status != null ? [status] : null,
+      orderBy: 'created_ms DESC',
+    );
+    return rows.map((r) => PaperPendingOrder.fromMap(r)).toList();
+  }
+
+  Future<int> updatePaperPendingOrder(PaperPendingOrder o) async {
+    final db = await instance.database;
+    return await db.update('paper_pending_orders', o.toMap(),
+        where: 'id = ?', whereArgs: [o.id]);
   }
 
   // ---------------- Simulator trading ----------------

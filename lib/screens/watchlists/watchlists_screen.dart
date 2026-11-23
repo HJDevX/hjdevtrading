@@ -1,12 +1,14 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:hjdev_trading/db/app_db.dart';
+import 'package:hjdev_trading/models/paper.dart';
 import 'package:hjdev_trading/models/quote.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
 import 'package:hjdev_trading/screens/watchlists/instrument_search_screen.dart';
 import 'package:hjdev_trading/services/index_feed_service.dart';
 import 'package:hjdev_trading/services/kotak_api.dart';
 import 'package:hjdev_trading/services/paper_broker.dart';
+import 'package:hjdev_trading/services/pending_order_engine.dart';
 import 'package:hjdev_trading/services/scrip_master_service.dart';
 
 /// Main watchlist screen: NIFTY/SENSEX header (live index feed), multiple
@@ -472,6 +474,13 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
         // live exactly like the rows behind it.
         quoteProvider: () => item.id != null ? _quotes[item.id!] : null,
         onTrade: (side, qty, price) => _paperTrade(item, side, qty, price),
+        onPlacePending: (order) async {
+          await PendingOrderEngine.instance.place(order);
+          _snack(
+              'Pending ${order.isBuy ? 'BUY' : 'SELL'} ${order.qty} ${order.symbol} placed — watch it in Practice → Orders',
+              green: true);
+          return null;
+        },
       ),
     );
   }
@@ -854,11 +863,13 @@ class _ItemSheet extends StatefulWidget {
   final Quote? Function() quoteProvider;
   final Future<String?> Function(String side, int qty, double price)
       onTrade;
+  final Future<String?> Function(PaperPendingOrder order) onPlacePending;
 
   const _ItemSheet({
     required this.item,
     required this.quoteProvider,
     required this.onTrade,
+    required this.onPlacePending,
   });
 
   @override
@@ -876,6 +887,17 @@ class _ItemSheetState extends State<_ItemSheet> {
   PaperFundInfo? _fund;
   Timer? _timer;
   bool _trading = false;
+
+  // Placement options: execute NOW, when a PRICE is touched, or at
+  // an exact TIME — plus an optional TARGET for BUY entries (exit
+  // at a target price / % gain / exact time, armed when it fills).
+  String _orderType = 'NOW'; // NOW | PRICE | TIME
+  double? _limitPrice;
+  TimeOfDay? _limitTime;
+  String _targetType = 'NONE'; // NONE | PRICE | TIME
+  double? _targetPrice;
+  double? _targetPct;
+  TimeOfDay? _targetTime;
 
   bool get _isDeriv =>
       widget.item.instrumentType == 'FUT' ||
@@ -969,6 +991,194 @@ class _ItemSheetState extends State<_ItemSheet> {
       setState(() => _trading = false);
       _loadFund(); // available fund may have changed
     }
+  }
+
+  void _sheetSnack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.red.shade700));
+  }
+
+  int _msFor(TimeOfDay t) {
+    final now = DateTime.now();
+    return DateTime(now.year, now.month, now.day, t.hour, t.minute)
+        .millisecondsSinceEpoch;
+  }
+
+  String _fmtTod(TimeOfDay? t) {
+    if (t == null) return 'Pick time';
+    var h = t.hour % 12;
+    if (h == 0) h = 12;
+    final ampm = t.hour >= 12 ? 'PM' : 'AM';
+    return '$h:${t.minute.toString().padLeft(2, '0')} $ampm';
+  }
+
+  Future<void> _editNumber({
+    required String title,
+    required double? initial,
+    required void Function(double?) onSet,
+  }) async {
+    final ctrl =
+        TextEditingController(text: initial?.toString() ?? '');
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        title: Text(title,
+            style: const TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType:
+              const TextInputType.numberWithOptions(decimal: true),
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelStyle: TextStyle(color: Colors.white54),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, -1.0),
+              child: const Text('Clear')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx, double.tryParse(ctrl.text.trim())),
+            child: const Text('Set'),
+          ),
+        ],
+      ),
+    );
+    if (value == null) return;
+    onSet(value < 0 ? null : value);
+  }
+
+  Future<void> _placePending(String side) async {
+    if (_trading) return;
+    final item = widget.item;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    double? trigPrice;
+    int? trigTime;
+    if (_orderType == 'PRICE') {
+      if (_limitPrice == null || _limitPrice! <= 0) {
+        _sheetSnack('Set the trigger price first');
+        return;
+      }
+      trigPrice = _limitPrice;
+    } else {
+      if (_limitTime == null) {
+        _sheetSnack('Pick the execution time first');
+        return;
+      }
+      trigTime = _msFor(_limitTime!);
+      if (trigTime <= nowMs) {
+        _sheetSnack('That time has already passed today');
+        return;
+      }
+    }
+    double? tPrice, tPct;
+    int? tTime;
+    if (side == 'B' && _targetType != 'NONE') {
+      if (_targetType == 'PRICE') {
+        final hasPrice = _targetPrice != null && _targetPrice! > 0;
+        final hasPct = _targetPct != null && _targetPct! > 0;
+        if (!hasPrice && !hasPct) {
+          _sheetSnack('Set a target price or a target %');
+          return;
+        }
+        if (hasPrice) {
+          tPrice = _targetPrice;
+        } else {
+          tPct = _targetPct;
+        }
+      } else {
+        if (_targetTime == null) {
+          _sheetSnack('Pick the target time first');
+          return;
+        }
+        tTime = _msFor(_targetTime!);
+        if (tTime <= nowMs) {
+          _sheetSnack('Target time has already passed today');
+          return;
+        }
+      }
+    }
+    setState(() => _trading = true);
+    final order = PaperPendingOrder(
+      symbol: item.symbol,
+      exchange: KotakApi.normalizeSegment(item.exchange),
+      token: item.token,
+      displayName: item.displayName,
+      instrumentType: item.instrumentType,
+      lotSize: item.lotSize,
+      side: side,
+      qty: _qty,
+      triggerType: _orderType,
+      triggerPrice: trigPrice,
+      triggerTimeMs: trigTime,
+      targetPrice: tPrice,
+      targetPct: tPct,
+      targetTimeMs: tTime,
+      createdMs: nowMs,
+    );
+    final error = await widget.onPlacePending(order);
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop();
+    } else {
+      setState(() => _trading = false);
+    }
+  }
+
+  void _submit(String side) {
+    if (_orderType == 'NOW') {
+      _trade(side);
+    } else {
+      _placePending(side);
+    }
+  }
+
+  Widget _chip(String label, bool selected, VoidCallback onTap) {
+    return ChoiceChip(
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      selected: selected,
+      onSelected: (_) => onTap(),
+      selectedColor: const Color(0xFF2962FF),
+      backgroundColor: Colors.white10,
+      labelStyle:
+          TextStyle(color: selected ? Colors.white : Colors.white60),
+      side: BorderSide.none,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  Widget _tapRow(String label, String value, VoidCallback onTap) {
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style:
+                    const TextStyle(color: Colors.white54, fontSize: 13)),
+            Row(
+              children: [
+                Text(value,
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(width: 4),
+                const Icon(Icons.edit, color: Colors.white38, size: 14),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _row(String label, String value, {Color? color}) {
@@ -1169,20 +1379,128 @@ class _ItemSheetState extends State<_ItemSheet> {
             child: Text('Tap the quantity number to type it directly',
                 style: TextStyle(color: Colors.white24, fontSize: 10.5)),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 14),
+          const Text('Execute',
+              style: TextStyle(color: Colors.white70, fontSize: 14)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              _chip('Now', _orderType == 'NOW',
+                  () => setState(() => _orderType = 'NOW')),
+              const SizedBox(width: 8),
+              _chip('At price', _orderType == 'PRICE', () {
+                setState(() {
+                  _orderType = 'PRICE';
+                  _limitPrice ??= _quote?.ltp;
+                });
+              }),
+              const SizedBox(width: 8),
+              _chip('At time', _orderType == 'TIME',
+                  () => setState(() => _orderType = 'TIME')),
+            ],
+          ),
+          if (_orderType == 'PRICE')
+            _tapRow(
+              'When price touches',
+              _limitPrice != null
+                  ? '₹${_limitPrice!.toStringAsFixed(2)}'
+                  : 'Set price',
+              () => _editNumber(
+                title: 'Trigger price (₹)',
+                initial: _limitPrice,
+                onSet: (v) => setState(() => _limitPrice = v),
+              ),
+            ),
+          if (_orderType == 'TIME')
+            _tapRow(
+              'Execute today at',
+              _fmtTod(_limitTime),
+              () async {
+                final picked = await showTimePicker(
+                  context: context,
+                  initialTime: _limitTime ?? TimeOfDay.now(),
+                );
+                if (picked != null) {
+                  setState(() => _limitTime = picked);
+                }
+              },
+            ),
+          if (_orderType != 'NOW') ...[
+            const SizedBox(height: 8),
+            const Text('Target — exit after BUY fills',
+                style: TextStyle(color: Colors.white70, fontSize: 14)),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                _chip('No target', _targetType == 'NONE',
+                    () => setState(() => _targetType = 'NONE')),
+                const SizedBox(width: 8),
+                _chip('Target price', _targetType == 'PRICE',
+                    () => setState(() => _targetType = 'PRICE')),
+                const SizedBox(width: 8),
+                _chip('Target time', _targetType == 'TIME',
+                    () => setState(() => _targetType = 'TIME')),
+              ],
+            ),
+            if (_targetType == 'PRICE') ...[
+              _tapRow(
+                'Target price',
+                _targetPrice != null
+                    ? '₹${_targetPrice!.toStringAsFixed(2)}'
+                    : 'Set price',
+                () => _editNumber(
+                  title: 'Target price (₹)',
+                  initial: _targetPrice,
+                  onSet: (v) => setState(() => _targetPrice = v),
+                ),
+              ),
+              _tapRow(
+                'or Target % gain',
+                _targetPct != null
+                    ? '+${_targetPct!.toStringAsFixed(1)}%'
+                    : 'Set %',
+                () => _editNumber(
+                  title: 'Target % gain',
+                  initial: _targetPct,
+                  onSet: (v) => setState(() => _targetPct = v),
+                ),
+              ),
+            ],
+            if (_targetType == 'TIME')
+              _tapRow(
+                'Exit today at',
+                _fmtTod(_targetTime),
+                () async {
+                  final picked = await showTimePicker(
+                    context: context,
+                    initialTime: _targetTime ?? TimeOfDay.now(),
+                  );
+                  if (picked != null) {
+                    setState(() => _targetTime = picked);
+                  }
+                },
+              ),
+            const Text(
+              'Targets apply to BUY orders: when the buy fills, the '
+              'target exit is armed automatically.',
+              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ],
+          const SizedBox(height: 10),
           Row(
             children: [
               Expanded(
                 child: ElevatedButton(
-                  onPressed: _trading ? null : () => _trade('B'),
+                  onPressed: _trading ? null : () => _submit('B'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _green,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
-                  child: const Text('BUY (Paper)',
-                      style: TextStyle(
+                  child: Text(
+                      _orderType == 'NOW' ? 'BUY (Paper)' : 'Place BUY order',
+                      style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold)),
                 ),
@@ -1190,15 +1508,18 @@ class _ItemSheetState extends State<_ItemSheet> {
               const SizedBox(width: 12),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: _trading ? null : () => _trade('S'),
+                  onPressed: _trading ? null : () => _submit('S'),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: _red,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8)),
                   ),
-                  child: const Text('SELL (Paper)',
-                      style: TextStyle(
+                  child: Text(
+                      _orderType == 'NOW'
+                          ? 'SELL (Paper)'
+                          : 'Place SELL order',
+                      style: const TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.bold)),
                 ),

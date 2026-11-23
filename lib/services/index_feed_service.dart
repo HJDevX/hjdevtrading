@@ -90,7 +90,13 @@ class IndexFeedService {
   final Set<String> _keys = <String>{};
 
   /// Scrip keys ("segment|token") subscribed via subscribeScripsLite.
+  /// Two owners share one socket: the watchlist screen (syncScrips)
+  /// and everyone else — pending-order engine + portfolio holdings
+  /// (syncExtraScrips). The socket subscribes the UNION of both.
   final Set<String> _scripKeys = <String>{};
+  final Set<String> _extraScripKeys = <String>{};
+
+  Set<String> get _allScripKeys => {..._scripKeys, ..._extraScripKeys};
 
   bool _loggedFirstMini = false;
 
@@ -204,15 +210,30 @@ class IndexFeedService {
   /// the next successful auth (the server forgets everything on
   /// disconnect, guide s.8).
   void syncScrips(List<String> keys) {
-    final desired = keys
-        .map((k) => k.trim())
-        .where((k) => k.isNotEmpty)
-        .toSet();
-    final added = desired.difference(_scripKeys);
-    final removed = _scripKeys.difference(desired);
+    final before = _allScripKeys;
     _scripKeys
-      ..removeAll(removed)
-      ..addAll(added);
+      ..clear()
+      ..addAll(keys
+          .map((k) => k.trim())
+          .where((k) => k.isNotEmpty));
+    _applyScripDiff(before, _allScripKeys);
+  }
+
+  /// The extra set: instruments the pending-order engine and the
+  /// paper portfolio need live ticks for, on top of the watchlist.
+  void syncExtraScrips(List<String> keys) {
+    final before = _allScripKeys;
+    _extraScripKeys
+      ..clear()
+      ..addAll(keys
+          .map((k) => k.trim())
+          .where((k) => k.isNotEmpty));
+    _applyScripDiff(before, _allScripKeys);
+  }
+
+  void _applyScripDiff(Set<String> before, Set<String> after) {
+    final added = after.difference(before);
+    final removed = before.difference(after);
     if (_state != IndexFeedState.connected) return;
     if (removed.isNotEmpty) {
       _sendFrame('unsubscribeScripsLite', removed.join(','));
@@ -389,8 +410,9 @@ class IndexFeedService {
       _sendFrame('subscribeIndices', joined);
       debugPrint('IndexFeed: subscribed indices: $joined');
     }
-    if (_scripKeys.isNotEmpty) {
-      final joined = _scripKeys.join(',');
+    final allScrips = _allScripKeys;
+    if (allScrips.isNotEmpty) {
+      final joined = allScrips.join(',');
       _sendFrame('snapshotScripsLite', joined);
       _sendFrame('subscribeScripsLite', joined);
       debugPrint('IndexFeed: subscribed scrips (lite): $joined');
