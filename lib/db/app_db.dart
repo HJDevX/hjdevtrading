@@ -33,7 +33,7 @@ class AppDb {
 
     return await openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -73,6 +73,16 @@ class AppDb {
     }
     if (oldVersion < 5) {
       await _createPaperAccountTable(db);
+    }
+    if (oldVersion < 6) {
+      // paper_positions gains the saved last price (Portfolio P&L
+      // basis when no live price is available).
+      try {
+        await db
+            .execute('ALTER TABLE paper_positions ADD COLUMN last_price REAL');
+      } catch (_) {
+        // Column already exists — fine.
+      }
     }
   }
 
@@ -150,7 +160,8 @@ class AppDb {
         instrument_type TEXT,
         lot_size INTEGER,
         qty INTEGER NOT NULL,
-        avg_price REAL NOT NULL
+        avg_price REAL NOT NULL,
+        last_price REAL
       )
     ''');
   }
@@ -388,6 +399,15 @@ class AppDb {
     if (rows.isEmpty) return 100000;
     final v = rows.first['starting_fund'];
     return v is num ? v.toDouble() : 100000;
+  }
+
+  /// The user can EDIT the virtual fund's starting amount.
+  Future<void> setPaperStartingFund(double amount) async {
+    final db = await instance.database;
+    await db.execute(
+        'INSERT OR IGNORE INTO paper_account (id, starting_fund) VALUES (1, 100000)');
+    await db.update('paper_account', {'starting_fund': amount},
+        where: 'id = ?', whereArgs: [1]);
   }
 
   /// Total booked (realized) P&L across all paper orders.

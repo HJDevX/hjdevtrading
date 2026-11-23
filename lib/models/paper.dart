@@ -76,6 +76,12 @@ class PaperPosition {
   final int qty;
   final double avgPrice;
 
+  /// The last live price seen for this position, SAVED in the phone's
+  /// local database. The Portfolio shows P&L from the live price when
+  /// one is available and from this saved price otherwise (market
+  /// closed, no network), so the P&L never disappears.
+  final double? lastPrice;
+
   PaperPosition({
     this.id,
     required this.symbol,
@@ -86,9 +92,18 @@ class PaperPosition {
     this.lotSize,
     required this.qty,
     required this.avgPrice,
+    this.lastPrice,
   });
 
   double get invested => qty * avgPrice;
+
+  /// Open (unrealized) P&L at [price] — live price if given, else the
+  /// saved last price, else null (never priced yet).
+  double? openPnl([double? price]) {
+    final p = price ?? lastPrice;
+    if (p == null) return null;
+    return (p - avgPrice) * qty;
+  }
 
   Map<String, dynamic> toMap() {
     final map = <String, dynamic>{
@@ -100,6 +115,7 @@ class PaperPosition {
       'lot_size': lotSize,
       'qty': qty,
       'avg_price': avgPrice,
+      'last_price': lastPrice,
     };
     if (id != null) map['id'] = id;
     return map;
@@ -116,10 +132,11 @@ class PaperPosition {
       lotSize: map['lot_size'] != null ? (map['lot_size'] as num).toInt() : null,
       qty: (map['qty'] as num?)?.toInt() ?? 0,
       avgPrice: (map['avg_price'] as num?)?.toDouble() ?? 0,
+      lastPrice: (map['last_price'] as num?)?.toDouble(),
     );
   }
 
-  PaperPosition copyWith({int? qty, double? avgPrice}) {
+  PaperPosition copyWith({int? qty, double? avgPrice, double? lastPrice}) {
     return PaperPosition(
       id: id,
       symbol: symbol,
@@ -130,6 +147,7 @@ class PaperPosition {
       lotSize: lotSize,
       qty: qty ?? this.qty,
       avgPrice: avgPrice ?? this.avgPrice,
+      lastPrice: lastPrice ?? this.lastPrice,
     );
   }
 }

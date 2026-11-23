@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:hjdev_trading/db/app_db.dart';
 import 'package:hjdev_trading/models/paper.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
@@ -33,10 +34,33 @@ class PaperBroker {
 
   final AppDb _db = AppDb.instance;
 
-  /// Bumped after every paper trade. The Practice tabs watch this to
-  /// know their lists are stale (they stay alive in the background, so
-  /// initState alone would never refresh them).
+  /// Bumped after every paper trade (and every fund edit). The
+  /// Practice tabs LISTEN to [revisionNotifier] so a trade shows up
+  /// in Orders and Portfolio instantly — no rebuild lottery.
   static int revision = 0;
+  static final ValueNotifier<int> revisionNotifier =
+      ValueNotifier<int>(0);
+
+  static void _bumpRevision() {
+    revision++;
+    revisionNotifier.value = revision;
+  }
+
+  /// Change the virtual fund's starting amount (user-editable).
+  /// Available fund re-derives instantly everywhere.
+  Future<void> setStartingFund(double amount) async {
+    await _db.setPaperStartingFund(amount);
+    _bumpRevision();
+  }
+
+  /// Save the latest live price against a position, so the
+  /// Portfolio's P&L survives in local storage and still shows when
+  /// the market is closed or there is no network.
+  Future<void> savePositionLastPrice(PaperPosition p, double price) async {
+    if (p.id == null || price <= 0) return;
+    if (p.lastPrice == price) return;
+    await _db.upsertPaperPosition(p.copyWith(lastPrice: price));
+  }
 
   /// Leverage for a buy: 5x for EQUITY (MTF-style), 1x (full value)
   /// for everything else — futures, options, anything unknown.
@@ -122,13 +146,14 @@ class PaperBroker {
           lotSize: item.lotSize,
           qty: qty,
           avgPrice: price,
+          lastPrice: price,
         ));
       } else {
         final newQty = existing.qty + qty;
         final newAvg =
             (existing.qty * existing.avgPrice + qty * price) / newQty;
-        await _db.upsertPaperPosition(
-            existing.copyWith(qty: newQty, avgPrice: newAvg));
+        await _db.upsertPaperPosition(existing.copyWith(
+            qty: newQty, avgPrice: newAvg, lastPrice: price));
       }
     } else {
       // SELL
@@ -159,7 +184,7 @@ class PaperBroker {
       realizedPnl: realizedPnl,
       timeMs: DateTime.now().millisecondsSinceEpoch,
     ));
-    revision++;
+    _bumpRevision();
     return null;
   }
 

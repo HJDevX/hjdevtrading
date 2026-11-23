@@ -9,9 +9,14 @@ import 'package:hjdev_trading/services/kotak_api.dart';
 import 'package:hjdev_trading/services/paper_broker.dart';
 
 /// PRACTICE page — paper trading only, against a VIRTUAL FUND
-/// (₹1,00,000 starting; equity buys get 5x MTF leverage — see
-/// PaperBroker). The app bar shows the available fund at all times.
-///  Tab 1: Orders    — every paper order placed from the watchlist
+/// (₹1,00,000 starting, EDITABLE from the pencil button; equity buys
+/// get 5x MTF leverage — see PaperBroker). The app bar shows the
+/// available fund at all times. Both tabs listen to the broker, so
+/// a trade appears in Orders and Portfolio INSTANTLY. Each
+/// position's last live price is saved in local storage, so its
+/// P&L still shows correctly with the market closed.
+///  Tab 1: Orders    — the full executed trade history, BUY and
+///                     SELL both, newest first
 ///  Tab 2: Portfolio — current paper holdings with live P&L and exit
 /// The flask icon in the app bar opens the SIMULATOR — replay a real
 /// past trading day with historical prices, for practice any time.
@@ -24,12 +29,20 @@ class PracticeScreen extends StatefulWidget {
 
 class _PracticeScreenState extends State<PracticeScreen> {
   PaperFundInfo? _fund;
-  int _seenRevision = -1;
 
   @override
   void initState() {
     super.initState();
     _loadFund();
+    // Instant refresh: any paper trade or fund edit reloads the
+    // app-bar fund line the moment it happens.
+    PaperBroker.revisionNotifier.addListener(_loadFund);
+  }
+
+  @override
+  void dispose() {
+    PaperBroker.revisionNotifier.removeListener(_loadFund);
+    super.dispose();
   }
 
   Future<void> _loadFund() async {
@@ -38,12 +51,73 @@ class _PracticeScreenState extends State<PracticeScreen> {
     setState(() => _fund = fund);
   }
 
+  /// Edit the virtual fund's starting amount.
+  Future<void> _editFund() async {
+    final current = _fund?.startingFund ?? 100000;
+    final ctrl =
+        TextEditingController(text: current.toStringAsFixed(0));
+    final value = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF161B22),
+        title: const Text('Edit virtual fund',
+            style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: ctrl,
+              autofocus: true,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'Starting fund (₹)',
+                labelStyle: TextStyle(color: Colors.white54),
+                prefixText: '₹ ',
+                prefixStyle: TextStyle(color: Colors.white70),
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Available = fund + booked P&L − margin blocked in open '
+              'positions. If the new fund is smaller than the blocked '
+              'margin, new buys stop until you sell something.',
+              style: TextStyle(color: Colors.white38, fontSize: 11.5),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel')),
+          TextButton(
+            onPressed: () =>
+                Navigator.pop(ctx, double.tryParse(ctrl.text.trim())),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (value == null || !mounted) return;
+    if (value <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Fund must be more than ₹0'),
+          backgroundColor: Colors.red));
+      return;
+    }
+    await PaperBroker.instance.setStartingFund(value);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content:
+          Text('Virtual fund set to ₹${value.toStringAsFixed(0)}'),
+      backgroundColor: Colors.green.shade700,
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_seenRevision != PaperBroker.revision) {
-      _seenRevision = PaperBroker.revision;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _loadFund());
-    }
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -83,6 +157,11 @@ class _PracticeScreenState extends State<PracticeScreen> {
             ],
           ),
           actions: [
+            IconButton(
+              tooltip: 'Edit virtual fund',
+              icon: const Icon(Icons.edit_outlined),
+              onPressed: _editFund,
+            ),
             IconButton(
               tooltip: 'Simulator — replay a real past day',
               icon: const Icon(Icons.science_outlined),
@@ -146,7 +225,6 @@ class _OrdersTabState extends State<_OrdersTab>
   final AppDb _db = AppDb.instance;
   List<PaperOrder> _orders = [];
   bool _loading = true;
-  int _seenRevision = -1;
 
   @override
   bool get wantKeepAlive => true;
@@ -155,6 +233,15 @@ class _OrdersTabState extends State<_OrdersTab>
   void initState() {
     super.initState();
     _load();
+    // Instant: a new paper trade reloads this list the moment it
+    // happens, even while this tab sits in the background.
+    PaperBroker.revisionNotifier.addListener(_load);
+  }
+
+  @override
+  void dispose() {
+    PaperBroker.revisionNotifier.removeListener(_load);
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -169,12 +256,6 @@ class _OrdersTabState extends State<_OrdersTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    // This tab stays alive in the background — reload whenever a new
-    // paper trade has happened since it was last shown.
-    if (_seenRevision != PaperBroker.revision) {
-      _seenRevision = PaperBroker.revision;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _load());
-    }
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_orders.isEmpty) {
       return const Center(
@@ -268,7 +349,6 @@ class _PortfolioTabState extends State<_PortfolioTab>
   final Map<String, Quote> _quotesByToken = {};
   PaperFundInfo? _fund;
   bool _loading = true;
-  int _seenRevision = -1;
   Timer? _timer;
 
   @override
@@ -278,12 +358,16 @@ class _PortfolioTabState extends State<_PortfolioTab>
   void initState() {
     super.initState();
     _load();
+    // Instant: a new paper trade reloads holdings the moment it
+    // happens, even while this tab sits in the background.
+    PaperBroker.revisionNotifier.addListener(_load);
     _timer = Timer.periodic(
         const Duration(seconds: 3), (_) => _refreshPrices());
   }
 
   @override
   void dispose() {
+    PaperBroker.revisionNotifier.removeListener(_load);
     _timer?.cancel();
     super.dispose();
   }
@@ -310,9 +394,18 @@ class _PortfolioTabState extends State<_PortfolioTab>
     final batch = await _api.getQuotesBatch(items);
     if (!mounted || batch.isEmpty) return;
     setState(() {
-      for (final p in _positions) {
+      for (var i = 0; i < _positions.length; i++) {
+        final p = _positions[i];
         final q = p.token != null ? batch[p.token!] : null;
-        if (q != null) _quotesByToken[p.token!] = q;
+        if (q == null) continue;
+        _quotesByToken[p.token!] = q;
+        // SAVE the fresh price to local storage: the position's P&L
+        // is then stored on the phone and still shows correctly
+        // when the market is closed or there is no network.
+        if (q.ltp > 0 && q.ltp != p.lastPrice) {
+          _positions[i] = p.copyWith(lastPrice: q.ltp);
+          PaperBroker.instance.savePositionLastPrice(p, q.ltp);
+        }
       }
     });
   }
@@ -345,10 +438,6 @@ class _PortfolioTabState extends State<_PortfolioTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (_seenRevision != PaperBroker.revision) {
-      _seenRevision = PaperBroker.revision;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _load());
-    }
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_positions.isEmpty) {
       return const Center(
@@ -367,7 +456,9 @@ class _PortfolioTabState extends State<_PortfolioTab>
     for (final p in _positions) {
       invested += p.invested;
       final q = p.token != null ? _quotesByToken[p.token!] : null;
-      current += (q?.ltp ?? p.avgPrice) * p.qty;
+      // Current value at the live price, or at the SAVED last price
+      // when no live price is available right now.
+      current += (q?.ltp ?? p.lastPrice ?? p.avgPrice) * p.qty;
     }
     final pnl = current - invested;
 
@@ -427,9 +518,10 @@ class _PortfolioTabState extends State<_PortfolioTab>
           }
           final p = _positions[i - 1];
           final q = p.token != null ? _quotesByToken[p.token!] : null;
-          final ltp = q?.ltp;
-          final pPnl =
-              ltp != null ? (ltp - p.avgPrice) * p.qty : null;
+          // Live price if we have one, else the price saved in local
+          // storage — either way the current P&L shows.
+          final ltp = q?.ltp ?? p.lastPrice;
+          final pPnl = p.openPnl(ltp);
           return ListTile(
             title: Text(p.symbol,
                 style: const TextStyle(
