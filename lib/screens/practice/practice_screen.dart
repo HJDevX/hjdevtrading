@@ -869,7 +869,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                     children: [
                       Text(
                         targetTimeMs != null
-                            ? _fmtTime(targetTimeMs)
+                            ? _fmtTime(targetTimeMs!)
                             : 'Not set',
                         style: const TextStyle(
                             color: Colors.white, fontSize: 13),
@@ -883,7 +883,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                             initialTime: targetTimeMs != null
                                 ? TimeOfDay.fromDateTime(
                                     DateTime.fromMillisecondsSinceEpoch(
-                                        targetTimeMs))
+                                        targetTimeMs!))
                                 : TimeOfDay.now(),
                           );
                           if (picked != null) {
@@ -949,7 +949,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 } else if (targetTimeMs != null &&
                     tp == null &&
                     tpc == null &&
-                    targetTimeMs <=
+                    targetTimeMs! <=
                         DateTime.now().millisecondsSinceEpoch) {
                   error = 'Target time has already passed today';
                 }
