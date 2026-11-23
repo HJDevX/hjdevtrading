@@ -327,17 +327,20 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Row(
                   children: [
-                    SizedBox(
-                      width: 70,
+                    Expanded(
+                      flex: 2,
                       child: Text('${s.label} candles',
                           style: const TextStyle(
                               color: Colors.white70, fontSize: 12.5)),
                     ),
-                    Text(s.rangeText,
-                        style: const TextStyle(
-                            color: _purple,
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w600)),
+                    Expanded(
+                      flex: 3,
+                      child: Text(s.rangeText,
+                          style: const TextStyle(
+                              color: _purple,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600)),
+                    ),
                   ],
                 ),
               )),
@@ -737,20 +740,19 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                   ),
                 ],
               ),
-              Row(
+              Wrap(
+                spacing: 6,
+                runSpacing: 2,
                 children: [1, 10, 25, 50, 100].map((n) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 6, top: 4),
-                    child: ActionChip(
-                      label: Text('$n', style: const TextStyle(fontSize: 11.5)),
-                      backgroundColor: Colors.white10,
-                      side: BorderSide.none,
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () {
-                        qtyCtrl.text = n.toString();
-                        setDlg(() {});
-                      },
-                    ),
+                  return ActionChip(
+                    label: Text('$n', style: const TextStyle(fontSize: 11.5)),
+                    backgroundColor: Colors.white10,
+                    side: BorderSide.none,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      qtyCtrl.text = n.toString();
+                      setDlg(() {});
+                    },
                   );
                 }).toList(),
               ),

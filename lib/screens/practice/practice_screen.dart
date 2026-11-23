@@ -159,6 +159,8 @@ class _PracticeScreenState extends State<PracticeScreen> {
                     color: Colors.white54,
                     fontSize: 11,
                     fontWeight: FontWeight.normal),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),
@@ -856,14 +858,16 @@ class _PortfolioTabState extends State<_PortfolioTab>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      _summaryCol('Invested', _fmtMoney(invested)),
-                      _summaryCol('Current', _fmtMoney(current)),
-                      _summaryCol(
-                        'P&L',
-                        _fmtMoney(pnl),
-                        color: pnl >= 0
-                            ? const Color(0xFF00C853)
-                            : const Color(0xFFE53935),
+                      Expanded(child: _summaryCol('Invested', _fmtMoney(invested))),
+                      Expanded(child: _summaryCol('Current', _fmtMoney(current))),
+                      Expanded(
+                        child: _summaryCol(
+                          'P&L',
+                          _fmtMoney(pnl),
+                          color: pnl >= 0
+                              ? const Color(0xFF00C853)
+                              : const Color(0xFFE53935),
+                        ),
                       ),
                     ],
                   ),
@@ -931,16 +935,21 @@ class _PortfolioTabState extends State<_PortfolioTab>
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  pPnl != null ? _fmtMoney(pPnl) : '—',
-                  style: TextStyle(
-                    color: pPnl == null
-                        ? Colors.white38
-                        : pPnl >= 0
-                            ? const Color(0xFF00C853)
-                            : const Color(0xFFE53935),
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      pPnl != null ? _fmtMoney(pPnl) : '—',
+                      style: TextStyle(
+                        color: pPnl == null
+                            ? Colors.white38
+                            : pPnl >= 0
+                                ? const Color(0xFF00C853)
+                                : const Color(0xFFE53935),
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -968,13 +977,20 @@ class _PortfolioTabState extends State<_PortfolioTab>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+            overflow: TextOverflow.ellipsis),
         const SizedBox(height: 3),
-        Text(value,
-            style: TextStyle(
-                color: color ?? Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.bold)),
+        // Money amounts vary in length — shrink to fit the column
+        // instead of overflowing on narrow phones.
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(value,
+              style: TextStyle(
+                  color: color ?? Colors.white,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold)),
+        ),
       ],
     );
   }
@@ -986,13 +1002,22 @@ class _PortfolioTabState extends State<_PortfolioTab>
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
-          Text(value,
-              style: TextStyle(
-                  color: color ?? Colors.white,
-                  fontSize: 12.5,
-                  fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+          Flexible(
+            child: Text(label,
+                style:
+                    const TextStyle(color: Colors.white54, fontSize: 12.5),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: color ?? Colors.white,
+                    fontSize: 12.5,
+                    fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+          ),
         ],
       ),
     );

@@ -581,11 +581,14 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
         children: [
           Row(
             children: [
-              const Text('HJDev Trading',
-                  style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 19,
-                      fontWeight: FontWeight.bold)),
+              const Flexible(
+                child: Text('HJDev Trading',
+                    style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 19,
+                        fontWeight: FontWeight.bold),
+                    overflow: TextOverflow.ellipsis),
+              ),
               const SizedBox(width: 8),
               Container(
                 width: 9,
@@ -596,9 +599,12 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                 ),
               ),
               const SizedBox(width: 4),
-              Text(_feedConnected ? 'Live' : 'Index feed off',
-                  style:
-                      const TextStyle(color: Colors.white38, fontSize: 11)),
+              Flexible(
+                child: Text(_feedConnected ? 'Live' : 'Index feed off',
+                    style:
+                        const TextStyle(color: Colors.white38, fontSize: 11),
+                    overflow: TextOverflow.ellipsis),
+              ),
               const Spacer(),
               IconButton(
                 tooltip: 'Download today\'s stock list (scrip master)',
@@ -645,21 +651,32 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                   color: Colors.white70,
                   fontSize: 12,
                   fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Text(ltp != null ? ltp.toStringAsFixed(2) : '—',
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.bold)),
           const SizedBox(width: 6),
-          Text(
-            pct != null
-                ? '${up ? '+' : ''}${pct.toStringAsFixed(2)}%'
-                : '',
-            style: TextStyle(
-                color: up ? _green : _red,
-                fontSize: 11,
-                fontWeight: FontWeight.w600),
+          Expanded(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(ltp != null ? ltp.toStringAsFixed(2) : '—',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold)),
+                  const SizedBox(width: 6),
+                  Text(
+                    pct != null
+                        ? '${up ? '+' : ''}${pct.toStringAsFixed(2)}%'
+                        : '',
+                    style: TextStyle(
+                        color: up ? _green : _red,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),
@@ -739,8 +756,11 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
             children: [
               Icon(Icons.search, color: Colors.white38, size: 19),
               SizedBox(width: 10),
-              Text('Search stocks, futures, options...',
-                  style: TextStyle(color: Colors.white38, fontSize: 13)),
+              Expanded(
+                child: Text('Search stocks, futures, options...',
+                    style: TextStyle(color: Colors.white38, fontSize: 13),
+                    overflow: TextOverflow.ellipsis),
+              ),
             ],
           ),
         ),
@@ -1245,19 +1265,29 @@ class _ItemSheetState extends State<_ItemSheet> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(label,
-                style:
-                    const TextStyle(color: Colors.white54, fontSize: 13)),
-            Row(
-              children: [
-                Text(value,
-                    style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600)),
-                const SizedBox(width: 4),
-                const Icon(Icons.edit, color: Colors.white38, size: 14),
-              ],
+            Flexible(
+              child: Text(label,
+                  style:
+                      const TextStyle(color: Colors.white54, fontSize: 13),
+                  overflow: TextOverflow.ellipsis),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: Text(value,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600)),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.edit, color: Colors.white38, size: 14),
+                ],
+              ),
             ),
           ],
         ),
@@ -1271,13 +1301,22 @@ class _ItemSheetState extends State<_ItemSheet> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: const TextStyle(color: Colors.white54, fontSize: 13)),
-          Text(value,
-              style: TextStyle(
-                  color: color ?? Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600)),
+          Flexible(
+            child: Text(label,
+                style:
+                    const TextStyle(color: Colors.white54, fontSize: 13),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: color ?? Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600)),
+          ),
         ],
       ),
     );
@@ -1296,12 +1335,16 @@ class _ItemSheetState extends State<_ItemSheet> {
     final notEnough =
         available != null && margin > 0 && margin > available + 0.005;
 
+    // Scrollable: with the fund box, execute options, target and
+    // stop-loss sections, the sheet is tall — on a short phone it
+    // must scroll instead of overflowing.
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
           Row(
             children: [
               Expanded(
@@ -1341,37 +1384,53 @@ class _ItemSheetState extends State<_ItemSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Text('₹${quote.ltp.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 24,
-                            fontWeight: FontWeight.bold)),
-                    const SizedBox(width: 8),
-                    Container(
-                      width: 7,
-                      height: 7,
-                      decoration: const BoxDecoration(
-                        color: _green,
-                        shape: BoxShape.circle,
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text('₹${quote.ltp.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold)),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Text('LIVE',
-                        style: TextStyle(
-                            color: _green,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold)),
-                  ],
+                      const SizedBox(width: 8),
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: _green,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Text('LIVE',
+                          style: TextStyle(
+                              color: _green,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold)),
+                    ],
+                  ),
                 ),
-                Text(
-                  '${quote.change >= 0 ? '+' : ''}${quote.change.toStringAsFixed(2)} (${quote.changePct >= 0 ? '+' : ''}${quote.changePct.toStringAsFixed(2)}%)',
-                  style: TextStyle(
-                      color: quote.change >= 0 ? _green : _red,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600),
+                const SizedBox(width: 10),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      '${quote.change >= 0 ? '+' : ''}${quote.change.toStringAsFixed(2)} (${quote.changePct >= 0 ? '+' : ''}${quote.changePct.toStringAsFixed(2)}%)',
+                      style: TextStyle(
+                          color: quote.change >= 0 ? _green : _red,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600),
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1467,18 +1526,18 @@ class _ItemSheetState extends State<_ItemSheet> {
           const Text('Execute',
               style: TextStyle(color: Colors.white70, fontSize: 14)),
           const SizedBox(height: 6),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
             children: [
               _chip('Now', _orderType == 'NOW',
                   () => setState(() => _orderType = 'NOW')),
-              const SizedBox(width: 8),
               _chip('At price', _orderType == 'PRICE', () {
                 setState(() {
                   _orderType = 'PRICE';
                   _limitPrice ??= _quote?.ltp;
                 });
               }),
-              const SizedBox(width: 8),
               _chip('At time', _orderType == 'TIME',
                   () => setState(() => _orderType = 'TIME')),
             ],
@@ -1513,14 +1572,14 @@ class _ItemSheetState extends State<_ItemSheet> {
           const Text('Target — exit after BUY fills',
               style: TextStyle(color: Colors.white70, fontSize: 14)),
           const SizedBox(height: 6),
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
             children: [
               _chip('No target', _targetType == 'NONE',
                   () => setState(() => _targetType = 'NONE')),
-              const SizedBox(width: 8),
               _chip('Target price', _targetType == 'PRICE',
                   () => setState(() => _targetType = 'PRICE')),
-              const SizedBox(width: 8),
               _chip('Target time', _targetType == 'TIME',
                   () => setState(() => _targetType = 'TIME')),
             ],
@@ -1636,11 +1695,12 @@ class _ItemSheetState extends State<_ItemSheet> {
             ],
           ),
           const SizedBox(height: 6),
-          const Center(
-            child: Text('Paper trade only — no real order goes to Kotak',
-                style: TextStyle(color: Colors.white38, fontSize: 11)),
-          ),
-        ],
+            const Center(
+              child: Text('Paper trade only — no real order goes to Kotak',
+                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+            ),
+          ],
+        ),
       ),
     );
   }

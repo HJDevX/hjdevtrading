@@ -244,20 +244,19 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   ),
                 ],
               ),
-              Row(
+              Wrap(
+                spacing: 6,
+                runSpacing: 2,
                 children: [1, 10, 25, 50, 100].map((n) {
-                  return Padding(
-                    padding: const EdgeInsets.only(right: 6, top: 4),
-                    child: ActionChip(
-                      label: Text('$n', style: const TextStyle(fontSize: 11.5)),
-                      backgroundColor: Colors.white10,
-                      side: BorderSide.none,
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () {
-                        qtyCtrl.text = n.toString();
-                        setDlg(() {});
-                      },
-                    ),
+                  return ActionChip(
+                    label: Text('$n', style: const TextStyle(fontSize: 11.5)),
+                    backgroundColor: Colors.white10,
+                    side: BorderSide.none,
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () {
+                      qtyCtrl.text = n.toString();
+                      setDlg(() {});
+                    },
                   );
                 }).toList(),
               ),
@@ -534,7 +533,8 @@ class _ReplayScreenState extends State<ReplayScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
+          Expanded(
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
@@ -545,6 +545,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     color: Colors.white70,
                     fontSize: 13,
                     fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
               Text(
@@ -552,6 +553,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     ? 'Day ${_engine.candleIndex + 1} of ${widget.candles.length} • ${widget.spec.label} candles'
                     : 'Candle ${_engine.candleIndex + 1} of ${widget.candles.length} • ${widget.spec.label}',
                 style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+                overflow: TextOverflow.ellipsis,
               ),
               if (_engine.isFinished)
                 const Padding(
@@ -563,24 +565,31 @@ class _ReplayScreenState extends State<ReplayScreen> {
                           fontWeight: FontWeight.bold)),
                 ),
             ],
+            ),
           ),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text('₹${price.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 21,
-                      fontWeight: FontWeight.bold)),
-              Text(
-                '${up ? '+' : ''}${change.toStringAsFixed(2)} (${up ? '+' : ''}${changePct.toStringAsFixed(2)}%) vs open',
-                style: TextStyle(
-                    color: up ? _kGreen : _kRed,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600),
+          const SizedBox(width: 10),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.topRight,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('₹${price.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 21,
+                          fontWeight: FontWeight.bold)),
+                  Text(
+                    '${up ? '+' : ''}${change.toStringAsFixed(2)} (${up ? '+' : ''}${changePct.toStringAsFixed(2)}%) vs open',
+                    style: TextStyle(
+                        color: up ? _kGreen : _kRed,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
         ],
       ),
@@ -800,15 +809,24 @@ class _ReplayScreenState extends State<ReplayScreen> {
           const Icon(Icons.account_balance_wallet_outlined,
               color: Colors.white54, size: 16),
           const SizedBox(width: 8),
-          Text(
-            'Holding ${_broker.positionQty} @ ₹${_broker.positionAvg.toStringAsFixed(2)}',
-            style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+          Expanded(
+            child: Text(
+              'Holding ${_broker.positionQty} @ ₹${_broker.positionAvg.toStringAsFixed(2)}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
-          const Spacer(),
-          Text(
-            '${_fmtMoney(unreal)} (${unreal >= 0 ? '+' : ''}${pct.toStringAsFixed(2)}%)',
-            style: TextStyle(
-                color: color, fontSize: 13, fontWeight: FontWeight.bold),
+          const SizedBox(width: 8),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerRight,
+              child: Text(
+                '${_fmtMoney(unreal)} (${unreal >= 0 ? '+' : ''}${pct.toStringAsFixed(2)}%)',
+                style: TextStyle(
+                    color: color, fontSize: 13, fontWeight: FontWeight.bold),
+              ),
+            ),
           ),
         ],
       ),
@@ -1050,12 +1068,15 @@ class _ReplayScreenState extends State<ReplayScreen> {
             children: [
               Row(
                 children: [
-                  Text(widget.title,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold)),
-                  const Spacer(),
+                  Flexible(
+                    child: Text(widget.title,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold),
+                        overflow: TextOverflow.ellipsis),
+                  ),
+                  const SizedBox(width: 8),
                   if (_broker.positionQty > 0)
                     Container(
                       padding: const EdgeInsets.symmetric(
@@ -1131,11 +1152,15 @@ class _ReplayScreenState extends State<ReplayScreen> {
     return Column(
       children: [
         Text(label,
-            style: const TextStyle(color: Colors.white38, fontSize: 11)),
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+            overflow: TextOverflow.ellipsis),
         const SizedBox(height: 2),
-        Text(_fmtMoney(value),
-            style: TextStyle(
-                color: color, fontSize: 15, fontWeight: FontWeight.bold)),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(_fmtMoney(value),
+              style: TextStyle(
+                  color: color, fontSize: 15, fontWeight: FontWeight.bold)),
+        ),
       ],
     );
   }
@@ -1146,13 +1171,22 @@ class _ReplayScreenState extends State<ReplayScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label,
-              style: const TextStyle(color: Colors.white54, fontSize: 13)),
-          Text(value,
-              style: TextStyle(
-                  color: color ?? Colors.white,
-                  fontSize: 13,
-                  fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+          Flexible(
+            child: Text(label,
+                style:
+                    const TextStyle(color: Colors.white54, fontSize: 13),
+                overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(width: 12),
+          Flexible(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: color ?? Colors.white,
+                    fontSize: 13,
+                    fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
+          ),
         ],
       ),
     );
