@@ -479,7 +479,9 @@ class _OrdersTabState extends State<_OrdersTab>
             clearTargetTime: true);
       } else {
         final tp = double.tryParse(tPriceCtrl.text.trim());
-        final tpc = double.tryParse(tPctCtrl.text.trim());
+        var tpc = double.tryParse(tPctCtrl.text.trim());
+        // Price OR % — never both: if both are filled, price wins.
+        if (tp != null && tpc != null) tpc = null;
         updated = updated.copyWith(
           targetPrice: tp,
           clearTargetPrice: tp == null,
@@ -493,7 +495,9 @@ class _OrdersTabState extends State<_OrdersTab>
         updated = updated.copyWith(clearSlPrice: true, clearSlPct: true);
       } else {
         final sp = double.tryParse(slPriceCtrl.text.trim());
-        final spc = double.tryParse(slPctCtrl.text.trim());
+        var spc = double.tryParse(slPctCtrl.text.trim());
+        // Price OR % — never both: if both are filled, price wins.
+        if (sp != null && spc != null) spc = null;
         updated = updated.copyWith(
           slPrice: sp,
           clearSlPrice: sp == null,
@@ -781,6 +785,231 @@ class _PortfolioTabState extends State<_PortfolioTab>
     });
   }
 
+  Widget _dlgField(
+      TextEditingController c, String label, TextInputType type) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: TextField(
+        controller: c,
+        keyboardType: type,
+        style: const TextStyle(color: Colors.white, fontSize: 14),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+          isDense: true,
+        ),
+      ),
+    );
+  }
+
+  /// Edit the exit plan (target / stop-loss) of an OPEN position:
+  /// shows the exits currently armed for it, lets the user change
+  /// or remove them, then re-arms. Target must sit ABOVE the
+  /// current price, stop-loss BELOW it; price OR % for each.
+  Future<void> _editExits(PaperPosition p) async {
+    final engine = PendingOrderEngine.instance;
+    final exits = await engine.exitsForPosition(p);
+    if (!mounted) return;
+    PaperPendingOrder? targetExit;
+    PaperPendingOrder? slExit;
+    for (final e in exits) {
+      if (e.isTarget) targetExit = e;
+      if (e.isStopLoss) slExit = e;
+    }
+    final q = p.token != null ? _quotesByToken[p.token!] : null;
+    final cur = (q != null && q.ltp > 0)
+        ? q.ltp
+        : (p.lastPrice ?? p.avgPrice);
+    final tPriceCtrl = TextEditingController(
+        text: (targetExit != null && targetExit.triggerType == 'PRICE')
+            ? targetExit.triggerPrice?.toStringAsFixed(2) ?? ''
+            : '');
+    final tPctCtrl = TextEditingController();
+    final slPriceCtrl = TextEditingController(
+        text: slExit?.triggerPrice?.toStringAsFixed(2) ?? '');
+    final slPctCtrl = TextEditingController();
+    var targetTimeMs =
+        (targetExit != null && targetExit.triggerType == 'TIME')
+            ? targetExit.triggerTimeMs
+            : null;
+
+    if (!mounted) return;
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1D23),
+          title: Text('Target / Stop-loss\n${p.symbol}',
+              style: const TextStyle(color: Colors.white, fontSize: 16)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Holding ${p.qty} @ avg ₹${p.avgPrice.toStringAsFixed(2)} • Current ₹${cur.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                      color: Colors.white54, fontSize: 12),
+                ),
+                const SizedBox(height: 10),
+                const Text('Target',
+                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                _dlgField(tPriceCtrl, 'Target price (₹)',
+                    const TextInputType.numberWithOptions(decimal: true)),
+                _dlgField(tPctCtrl, 'or Target % gain',
+                    const TextInputType.numberWithOptions(decimal: true)),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('or Exit today at',
+                      style:
+                          TextStyle(color: Colors.white54, fontSize: 12)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        targetTimeMs != null
+                            ? _fmtTime(targetTimeMs)
+                            : 'Not set',
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 13),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.schedule,
+                            color: Colors.white54, size: 19),
+                        onPressed: () async {
+                          final picked = await showTimePicker(
+                            context: ctx,
+                            initialTime: targetTimeMs != null
+                                ? TimeOfDay.fromDateTime(
+                                    DateTime.fromMillisecondsSinceEpoch(
+                                        targetTimeMs))
+                                : TimeOfDay.now(),
+                          );
+                          if (picked != null) {
+                            final now = DateTime.now();
+                            setDlg(() => targetTimeMs = DateTime(
+                                    now.year, now.month, now.day,
+                                    picked.hour, picked.minute)
+                                .millisecondsSinceEpoch);
+                          }
+                        },
+                      ),
+                      if (targetTimeMs != null)
+                        IconButton(
+                          icon: const Icon(Icons.clear,
+                              color: Colors.white38, size: 18),
+                          onPressed: () =>
+                              setDlg(() => targetTimeMs = null),
+                        ),
+                    ],
+                  ),
+                ),
+                const Text('Stop-loss',
+                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                _dlgField(slPriceCtrl, 'Stop-loss price (₹)',
+                    const TextInputType.numberWithOptions(decimal: true)),
+                _dlgField(slPctCtrl, 'or Stop-loss % loss',
+                    const TextInputType.numberWithOptions(decimal: true)),
+                const SizedBox(height: 6),
+                Text(
+                  'Target must be ABOVE ₹${cur.toStringAsFixed(2)}, '
+                  'stop-loss BELOW it. Use price OR % for each — '
+                  'leave everything empty to remove both exits.',
+                  style: const TextStyle(
+                      color: Colors.white38, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                final tp =
+                    double.tryParse(tPriceCtrl.text.trim());
+                final tpc = double.tryParse(tPctCtrl.text.trim());
+                final sp =
+                    double.tryParse(slPriceCtrl.text.trim());
+                final spc = double.tryParse(slPctCtrl.text.trim());
+                String? error;
+                if (tp != null && tpc != null) {
+                  error = 'Use target price OR % — not both';
+                } else if (sp != null && spc != null) {
+                  error = 'Use stop-loss price OR % — not both';
+                } else if (tp != null && tp <= cur) {
+                  error =
+                      'Target must be ABOVE the current price ₹${cur.toStringAsFixed(2)}';
+                } else if (sp != null && sp >= cur) {
+                  error =
+                      'Stop-loss must be BELOW the current price ₹${cur.toStringAsFixed(2)}';
+                } else if (targetTimeMs != null &&
+                    tp == null &&
+                    tpc == null &&
+                    targetTimeMs <=
+                        DateTime.now().millisecondsSinceEpoch) {
+                  error = 'Target time has already passed today';
+                }
+                if (error != null) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+                    content: Text(error),
+                    backgroundColor: const Color(0xFFE53935),
+                  ));
+                  return;
+                }
+                Navigator.pop(ctx, true);
+              },
+              child: const Text('Save exits'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (saved != true || !mounted) return;
+
+    final tp = double.tryParse(tPriceCtrl.text.trim());
+    final tpc = double.tryParse(tPctCtrl.text.trim());
+    final sp = double.tryParse(slPriceCtrl.text.trim());
+    final spc = double.tryParse(slPctCtrl.text.trim());
+    final useTime =
+        (tp == null && tpc == null) ? targetTimeMs : null;
+
+    // Replace the old exits with the edited plan.
+    for (final e in exits) {
+      await engine.cancel(e);
+    }
+    if (tp != null || tpc != null || useTime != null || sp != null ||
+        spc != null) {
+      final template = PaperPendingOrder(
+        symbol: p.symbol,
+        exchange: KotakApi.normalizeSegment(p.exchange),
+        token: p.token,
+        displayName: p.displayName,
+        instrumentType: p.instrumentType,
+        lotSize: p.lotSize,
+        side: 'B',
+        qty: p.qty,
+        triggerType: 'NOW',
+        targetPrice: tp,
+        targetPct: tpc,
+        targetTimeMs: useTime,
+        slPrice: sp,
+        slPct: spc,
+        createdMs: DateTime.now().millisecondsSinceEpoch,
+      );
+      await engine.armExitsForImmediateBuy(template, cur);
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Exit plan updated — see Practice → Orders'),
+      backgroundColor: Color(0xFF00C853),
+    ));
+    _load();
+  }
+
   Future<void> _exitPosition(PaperPosition p) async {
     final q = p.token != null ? _quotesByToken[p.token!] : null;
     final price = q?.ltp ?? 0;
@@ -935,6 +1164,12 @@ class _PortfolioTabState extends State<_PortfolioTab>
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
+                IconButton(
+                  tooltip: 'Edit target / stop-loss for this holding',
+                  icon: const Icon(Icons.gps_fixed,
+                      color: Colors.white54, size: 20),
+                  onPressed: () => _editExits(p),
+                ),
                 Flexible(
                   child: FittedBox(
                     fit: BoxFit.scaleDown,

@@ -929,7 +929,8 @@ class _ItemSheetState extends State<_ItemSheet> {
   double? _targetPct;
   TimeOfDay? _targetTime;
   // Optional stop-loss for BUY entries (any Execute mode): an exit
-  // price, or a % loss below the fill price. Price wins if both set.
+  // price, or a % loss below the fill price — only ONE of the two:
+  // setting one clears the other (same rule for the target).
   double? _slPrice;
   double? _slPct;
 
@@ -1032,6 +1033,24 @@ class _ItemSheetState extends State<_ItemSheet> {
         _sheetSnack('Target time has already passed today');
         return false;
       }
+    }
+    // Direction rules against the CURRENT price: a target is a
+    // profit sale, so it must sit ABOVE the current price; a
+    // stop-loss protects below, so it must sit BELOW it.
+    final cur = _quote?.ltp ?? 0;
+    if (cur > 0 &&
+        _targetType == 'PRICE' &&
+        _targetPrice != null &&
+        _targetPrice! > 0 &&
+        _targetPrice! <= cur) {
+      _sheetSnack(
+          'Target price must be ABOVE the current price ₹${cur.toStringAsFixed(2)}');
+      return false;
+    }
+    if (cur > 0 && _slPrice != null && _slPrice! > 0 && _slPrice! >= cur) {
+      _sheetSnack(
+          'Stop-loss must be BELOW the current price ₹${cur.toStringAsFixed(2)}');
+      return false;
     }
     return true;
   }
@@ -1201,6 +1220,24 @@ class _ItemSheetState extends State<_ItemSheet> {
           _sheetSnack('Target time has already passed today');
           return;
         }
+      }
+    }
+    if (side == 'B') {
+      // Same direction rules as Execute Now, against the CURRENT
+      // price: target above it, stop-loss below it.
+      final cur = _quote?.ltp ?? 0;
+      if (cur > 0 && tPrice != null && tPrice <= cur) {
+        _sheetSnack(
+            'Target price must be ABOVE the current price ₹${cur.toStringAsFixed(2)}');
+        return;
+      }
+      if (cur > 0 &&
+          _slPrice != null &&
+          _slPrice! > 0 &&
+          _slPrice! >= cur) {
+        _sheetSnack(
+            'Stop-loss must be BELOW the current price ₹${cur.toStringAsFixed(2)}');
+        return;
       }
     }
     setState(() => _trading = true);
@@ -1592,8 +1629,13 @@ class _ItemSheetState extends State<_ItemSheet> {
                   : 'Set price',
               () => _editNumber(
                 title: 'Target price (₹)',
-                initial: _targetPrice,
-                onSet: (v) => setState(() => _targetPrice = v),
+                // Starts from the CURRENT price — raise it to your
+                // target.
+                initial: _targetPrice ?? _quote?.ltp,
+                onSet: (v) => setState(() {
+                  _targetPrice = v;
+                  if (v != null) _targetPct = null; // price OR % — one only
+                }),
               ),
             ),
             _tapRow(
@@ -1604,7 +1646,10 @@ class _ItemSheetState extends State<_ItemSheet> {
               () => _editNumber(
                 title: 'Target % gain',
                 initial: _targetPct,
-                onSet: (v) => setState(() => _targetPct = v),
+                onSet: (v) => setState(() {
+                  _targetPct = v;
+                  if (v != null) _targetPrice = null; // price OR % — one only
+                }),
               ),
             ),
           ],
@@ -1632,8 +1677,13 @@ class _ItemSheetState extends State<_ItemSheet> {
                 : 'Not set',
             () => _editNumber(
               title: 'Stop-loss price (₹)',
-              initial: _slPrice,
-              onSet: (v) => setState(() => _slPrice = v),
+              // Starts from the CURRENT price — lower it to your
+              // stop-loss.
+              initial: _slPrice ?? _quote?.ltp,
+              onSet: (v) => setState(() {
+                _slPrice = v;
+                if (v != null) _slPct = null; // price OR % — one only
+              }),
             ),
           ),
           _tapRow(
@@ -1644,14 +1694,19 @@ class _ItemSheetState extends State<_ItemSheet> {
             () => _editNumber(
               title: 'Stop-loss % loss',
               initial: _slPct,
-              onSet: (v) => setState(() => _slPct = v),
+              onSet: (v) => setState(() {
+                _slPct = v;
+                if (v != null) _slPrice = null; // price OR % — one only
+              }),
             ),
           ),
           const Text(
             'Target and stop-loss apply to BUY orders in every mode '
             '(Now, At price, At time): when the buy fills, the exits '
             'are armed automatically, and whichever fires first '
-            'cancels the other.',
+            'cancels the other. Target must be ABOVE the current '
+            'price, stop-loss BELOW it — and for each one, use the '
+            'price OR the %, never both.',
             style: TextStyle(color: Colors.white38, fontSize: 11),
           ),
           const SizedBox(height: 10),

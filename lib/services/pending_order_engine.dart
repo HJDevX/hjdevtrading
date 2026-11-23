@@ -105,6 +105,13 @@ class PendingOrderEngine {
 
   // ---------------- Public operations ----------------
 
+  /// The armed exit orders (target and/or stop-loss) for one open
+  /// position — the Portfolio tab uses this to show and edit them.
+  Future<List<PaperPendingOrder>> exitsForPosition(PaperPosition p) async {
+    final key = '${KotakApi.normalizeSegment(p.exchange)}|${p.token}';
+    return _active.where((o) => o.isExit && _keyFor(o) == key).toList();
+  }
+
   Future<List<PaperPendingOrder>> activeOrders() =>
       _db.getPaperPendingOrders(status: 'ACTIVE');
 
