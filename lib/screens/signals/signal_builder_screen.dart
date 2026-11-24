@@ -236,9 +236,10 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
   }
 
   Future<SignalLine?> _showLineEditor(SignalLine? existing) {
-    return showDialog<SignalLine>(
-      context: context,
-      builder: (_) => _LineEditorDialog(existing: existing),
+    return Navigator.push<SignalLine>(
+      context,
+      MaterialPageRoute(
+          builder: (_) => _LineEditorScreen(existing: existing)),
     );
   }
 
@@ -780,45 +781,30 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
   }
 }
 
-/// The maths-line editor — TWO ways to build the same line
-/// (design §10):
-///  • TAP BUILDER (easy way): tap terms, numbers, times and
-///    signs; quick examples fill a whole line in one tap.
-///  • STOCK IDE (type way): type the line as text — the editor
-///    suggests terms as you type — and the parser reads it back
-///    into the exact same stored form.
-/// Either way the finished line's answer is TRUE or FALSE, and
-/// the two sides' types are checked before saving.
-class _LineEditorDialog extends StatefulWidget {
+/// STOCK IDE — the one maths-line editor, now a FULL SCREEN page.
+/// Type the line as text; matching terms are suggested as you
+/// type; the ℹ button opens the all-terms page (tap a term there
+/// to add it to the line). SAVE RULE: a line is saved only when
+/// its answer is TRUE or FALSE — a complete
+/// LEFT compare RIGHT line. Anything else is refused, with the
+/// reason shown on the page.
+class _LineEditorScreen extends StatefulWidget {
   final SignalLine? existing;
-  const _LineEditorDialog({this.existing});
+  const _LineEditorScreen({this.existing});
 
   @override
-  State<_LineEditorDialog> createState() => _LineEditorDialogState();
+  State<_LineEditorScreen> createState() => _LineEditorScreenState();
 }
 
-class _LineEditorDialogState extends State<_LineEditorDialog> {
+class _LineEditorScreenState extends State<_LineEditorScreen> {
   static const Color _text = Color(0xFF424242);
   static const Color _secondary = Color(0xFF666666);
   static const Color _hint = Color(0xFF9B9B9B);
   static const Color _blue = Color(0xFF387ED1);
   static const Color _panel = Color(0xFFF7F7F7);
   static const Color _hairline = Color(0xFFE0E0E0);
-  static const Color _green = Color(0xFF00C853);
   static const Color _red = Color(0xFFE53935);
 
-  // Tap-builder state.
-  final List<MathsAtom> _leftAtoms = [];
-  final List<String> _leftOps = [];
-  final List<MathsAtom> _rightAtoms = [];
-  final List<String> _rightOps = [];
-  final List<MathsAtom> _right2Atoms = [];
-  final List<String> _right2Ops = [];
-  String _compare = '>=';
-  String? _error;
-
-  // Stock IDE state.
-  bool _typeMode = false;
   final TextEditingController _ideCtrl = TextEditingController();
   SignalLine? _ideLine;
   String? _ideError;
@@ -827,7 +813,10 @@ class _LineEditorDialogState extends State<_LineEditorDialog> {
   void initState() {
     super.initState();
     final e = widget.existing;
-    if (e != null) _loadLine(e);
+    if (e != null) {
+      _ideCtrl.text = e.formula;
+      _ideRefresh();
+    }
   }
 
   @override
@@ -835,67 +824,6 @@ class _LineEditorDialogState extends State<_LineEditorDialog> {
     _ideCtrl.dispose();
     super.dispose();
   }
-
-  void _loadLine(SignalLine e) {
-    _leftAtoms
-      ..clear()
-      ..addAll(e.left.atoms);
-    _leftOps
-      ..clear()
-      ..addAll(e.left.ops);
-    _rightAtoms
-      ..clear()
-      ..addAll(e.right.atoms);
-    _rightOps
-      ..clear()
-      ..addAll(e.right.ops);
-    _right2Atoms.clear();
-    _right2Ops.clear();
-    if (e.right2 != null) {
-      _right2Atoms.addAll(e.right2!.atoms);
-      _right2Ops.addAll(e.right2!.ops);
-    }
-    _compare = e.compare;
-  }
-
-  bool get _needsRight2 => _compare == 'BETWEEN' || _compare == 'OUTSIDE';
-
-  MathsSide _side(List<MathsAtom> atoms, List<String> ops) =>
-      MathsSide(atoms: List.of(atoms), ops: List.of(ops));
-
-  SignalLine _currentLine() => SignalLine(
-        left: _side(_leftAtoms, _leftOps),
-        compare: _compare,
-        right: _side(_rightAtoms, _rightOps),
-        right2: _needsRight2 ? _side(_right2Atoms, _right2Ops) : null,
-      );
-
-  // ---------------- Mode switching ----------------
-
-  void _toTypeMode() {
-    final line = _currentLine();
-    _ideCtrl.text =
-        (line.left.isEmpty && line.right.isEmpty) ? '' : line.formula;
-    _ideRefresh();
-    setState(() => _typeMode = true);
-  }
-
-  void _toTapMode() {
-    if (_ideCtrl.text.trim().isNotEmpty) {
-      final r = parseSignalLine(_ideCtrl.text);
-      if (r.line == null) {
-        setState(() => _ideError = r.error);
-        return;
-      }
-      _loadLine(r.line!);
-    }
-    setState(() {
-      _typeMode = false;
-      _error = null;
-    });
-  }
-
-  // ---------------- Stock IDE helpers ----------------
 
   void _ideRefresh() {
     final text = _ideCtrl.text;
@@ -972,572 +900,345 @@ class _LineEditorDialogState extends State<_LineEditorDialog> {
     });
   }
 
-  // ---------------- Atom picking (tap builder) ----------------
+  void _applyExample(String formula) {
+    setState(() {
+      _ideCtrl.value = TextEditingValue(
+        text: formula,
+        selection: TextSelection.collapsed(offset: formula.length),
+      );
+      _ideRefresh();
+    });
+  }
 
-  Future<SignalTerm?> _pickTerm(String title) {
-    return showDialog<SignalTerm>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(title, style: const TextStyle(fontSize: 16)),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              for (final t in kSignalTerms)
-                ListTile(
-                  dense: true,
-                  title: Text(t.code,
-                      style: const TextStyle(
-                          color: _text,
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.bold)),
-                  subtitle: Text(t.label,
-                      style: const TextStyle(
-                          color: _secondary, fontSize: 11.5)),
-                  trailing: Text(t.type,
-                      style: const TextStyle(color: _blue, fontSize: 10.5)),
-                  onTap: () => Navigator.pop(ctx, t),
-                ),
-            ],
-          ),
-        ),
-      ),
+  Future<void> _openTerms() async {
+    final code = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(builder: (_) => const _TermsInfoScreen()),
     );
+    if (code != null && mounted) _insertSuggestion(code);
   }
 
-  Future<double?> _pickNumber() async {
-    final ctrl = TextEditingController();
-    final text = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Number', style: TextStyle(fontSize: 16)),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType:
-              const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: const InputDecoration(hintText: 'e.g. 0.7, 40, 1.5'),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: const Text('Add')),
-        ],
-      ),
-    );
-    if (text == null) return null;
-    return double.tryParse(text);
-  }
-
-  Future<void> _addAtom(
-      List<MathsAtom> atoms, List<String> ops, MathsAtom? atom) async {
-    if (atom == null) return;
-    setState(() {
-      if (atoms.isNotEmpty) ops.add('+');
-      atoms.add(atom);
-      _error = null;
-    });
-  }
-
-  Future<void> _addTerm(List<MathsAtom> atoms, List<String> ops) async {
-    final t = await _pickTerm('Pick a term');
-    if (t != null) await _addAtom(atoms, ops, MathsAtom.term(t.code));
-  }
-
-  Future<void> _addNumber(List<MathsAtom> atoms, List<String> ops) async {
-    final v = await _pickNumber();
-    if (v != null) await _addAtom(atoms, ops, MathsAtom.number(v));
-  }
-
-  Future<void> _addTime(List<MathsAtom> atoms, List<String> ops) async {
-    final picked = await showTimePicker(
-      context: context,
-      initialTime: const TimeOfDay(hour: 10, minute: 15),
-    );
-    if (picked != null) {
-      await _addAtom(
-          atoms, ops, MathsAtom.time(picked.hour * 60 + picked.minute));
-    }
-  }
-
-  Future<void> _addPctChange(
-      List<MathsAtom> atoms, List<String> ops) async {
-    final a = await _pickTerm('PCT_CHANGE — first term (the value)');
-    if (a == null) return;
-    final b = await _pickTerm('PCT_CHANGE — second term (the base)');
-    if (b == null) return;
-    await _addAtom(atoms, ops, MathsAtom.pctChange(a.code, b.code));
-  }
-
-  void _removeAtom(List<MathsAtom> atoms, List<String> ops, int idx) {
-    setState(() {
-      atoms.removeAt(idx);
-      if (idx > 0) {
-        ops.removeAt(idx - 1);
-      } else if (ops.isNotEmpty) {
-        ops.removeAt(0);
-      }
-    });
-  }
-
-  void _cycleOp(List<String> ops, int idx) {
-    const cycle = ['+', '-', '*', '/'];
-    setState(() {
-      final cur = cycle.indexOf(ops[idx]);
-      ops[idx] = cycle[(cur + 1) % cycle.length];
-    });
-  }
-
-  void _applyExample(SignalLine line) {
-    setState(() {
-      _loadLine(line);
-      _error = null;
-    });
-  }
-
-  // ---------------- Save ----------------
-
+  /// SAVE RULE: only a line whose answer is TRUE or FALSE — a
+  /// complete LEFT compare RIGHT line — can be saved. Anything
+  /// else stays on this page with the reason shown.
   void _save() {
-    if (_typeMode) {
-      final r = parseSignalLine(_ideCtrl.text);
-      if (r.line == null) {
-        setState(() => _ideError = r.error);
-        return;
-      }
-      Navigator.pop(context, r.line);
+    final r = parseSignalLine(_ideCtrl.text);
+    if (r.line == null) {
+      setState(() => _ideError = r.error);
       return;
     }
-    final line = _currentLine();
-    if (!line.isComplete) {
-      setState(() => _error = _needsRight2
-          ? 'Fill the left side, the right side AND the upper bound'
-          : 'Fill both the left and the right side');
-      return;
-    }
-    final err = line.typeError;
-    if (err != null) {
-      setState(() => _error = err);
-      return;
-    }
-    Navigator.pop(context, line);
+    Navigator.pop(context, r.line);
   }
-
-  // ---------------- Build ----------------
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    final suggestions = _ideSuggestions();
+    const signs = [
+      '>=', '<=', '>', '<', '=', '!=',
+      '+', '-', '×', '÷', '(', ')', ',',
+    ];
+    const examples = <String, String>{
+      'Gap up 0.7%': 'PCT_CHANGE(OPEN, PREV_CLOSE) >= 0.7',
+      'Price above open': 'PRICE >= OPEN',
+      'Time 10:15 or later': 'TIME_NOW >= 10:15',
+      'Up 1% today': 'CHANGE_PCT >= 1',
+    };
+    return Scaffold(
       backgroundColor: Colors.white,
-      title: Text(
-          widget.existing == null ? 'Add maths line' : 'Edit maths line',
-          style: const TextStyle(color: _text, fontSize: 16)),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Build one line whose answer is TRUE or FALSE.',
-              style: TextStyle(color: _secondary, fontSize: 12.5),
+      appBar: AppBar(
+        title: Text(
+            widget.existing == null ? 'Add maths line' : 'Edit maths line',
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          IconButton(
+            tooltip: 'See all terms',
+            icon: const Icon(Icons.info_outline, color: _blue),
+            onPressed: _openTerms,
+          ),
+          TextButton(
+            onPressed: _save,
+            child: const Text('SAVE',
+                style: TextStyle(
+                    color: _blue,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14)),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+        children: [
+          const Text(
+            'Type one maths line in the Stock IDE. Its answer must '
+            'be TRUE or FALSE: a left side, a compare sign, and a '
+            'right side. A line whose answer is not TRUE or FALSE '
+            'will not be saved.',
+            style: TextStyle(color: _secondary, fontSize: 12.5),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: _ideCtrl,
+            autofocus: true,
+            maxLines: 4,
+            style: const TextStyle(
+                color: _text, fontSize: 15, fontFamily: 'monospace'),
+            decoration: const InputDecoration(
+              hintText: 'e.g. PCT_CHANGE(OPEN, PREV_CLOSE) >= 0.7',
+              border: OutlineInputBorder(),
             ),
-            const SizedBox(height: 10),
-            Row(
+            onChanged: (_) => setState(_ideRefresh),
+          ),
+          if (suggestions.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('Suggested terms — tap to add:',
+                style: TextStyle(
+                    color: _secondary,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
               children: [
-                Expanded(
-                  child: ChoiceChip(
-                    label: const Text('Tap Builder'),
-                    selected: !_typeMode,
-                    onSelected: (_) {
-                      if (_typeMode) _toTapMode();
-                    },
-                    selectedColor: _blue,
-                    labelStyle: TextStyle(
-                        color: !_typeMode ? Colors.white : _text,
-                        fontSize: 12.5),
-                    side: BorderSide.none,
-                    backgroundColor: _panel,
+                for (final s in suggestions)
+                  ActionChip(
+                    label: Text(s, style: const TextStyle(fontSize: 12.5)),
+                    onPressed: () => _insertSuggestion(s),
+                    backgroundColor: Colors.white,
+                    side: const BorderSide(color: _blue),
+                    labelStyle: const TextStyle(color: _blue),
+                    visualDensity: VisualDensity.compact,
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ChoiceChip(
-                    label: const Text('Stock IDE — type it'),
-                    selected: _typeMode,
-                    onSelected: (_) {
-                      if (!_typeMode) _toTypeMode();
-                    },
-                    selectedColor: _blue,
-                    labelStyle: TextStyle(
-                        color: _typeMode ? Colors.white : _text,
-                        fontSize: 12.5),
-                    side: BorderSide.none,
-                    backgroundColor: _panel,
-                  ),
-                ),
               ],
             ),
-            const SizedBox(height: 14),
-            if (_typeMode) _ideEditor() else _tapEditor(),
           ],
-        ),
-      ),
-      actions: [
-        TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel')),
-        TextButton(
-          onPressed: _save,
-          child: const Text('Save line',
-              style: TextStyle(color: _blue, fontWeight: FontWeight.bold)),
-        ),
-      ],
-    );
-  }
-
-  // ---------------- Tap builder UI ----------------
-
-  Widget _tapEditor() {
-    final line = _currentLine();
-    final typeErr = line.typeError;
-    final showExamples = _leftAtoms.isEmpty && _rightAtoms.isEmpty;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (showExamples) ...[
-          const Text('Quick examples — tap one to start:',
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final s in signs)
+                OutlinedButton(
+                  onPressed: () => _insertSign(s),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _text,
+                    side: const BorderSide(color: _hairline),
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 6),
+                    minimumSize: Size.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  child: Text(s, style: const TextStyle(fontSize: 14)),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text('Examples — tap to fill:',
               style: TextStyle(
                   color: _secondary,
-                  fontSize: 12,
+                  fontSize: 12.5,
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
             runSpacing: 6,
             children: [
-              _exampleChip('Gap up 0.7%',
-                  SignalLine(
-                    left: MathsSide(atoms: [
-                      MathsAtom.pctChange('OPEN', 'PREV_CLOSE')
-                    ]),
-                    compare: '>=',
-                    right: MathsSide(atoms: [MathsAtom.number(0.7)]),
-                  )),
-              _exampleChip('Price above open',
-                  SignalLine(
-                    left: MathsSide(atoms: [MathsAtom.term('PRICE')]),
-                    compare: '>=',
-                    right: MathsSide(atoms: [MathsAtom.term('OPEN')]),
-                  )),
-              _exampleChip('Time 10:15 or later',
-                  SignalLine(
-                    left: MathsSide(atoms: [MathsAtom.term('TIME_NOW')]),
-                    compare: '>=',
-                    right: MathsSide(atoms: [MathsAtom.time(615)]),
-                  )),
-              _exampleChip('Up 1% today',
-                  SignalLine(
-                    left:
-                        MathsSide(atoms: [MathsAtom.term('CHANGE_PCT')]),
-                    compare: '>=',
-                    right: MathsSide(atoms: [MathsAtom.number(1)]),
-                  )),
+              for (final entry in examples.entries)
+                ActionChip(
+                  label: Text(entry.key,
+                      style: const TextStyle(fontSize: 12.5)),
+                  onPressed: () => _applyExample(entry.value),
+                  backgroundColor: _panel,
+                  side: BorderSide.none,
+                  visualDensity: VisualDensity.compact,
+                ),
             ],
           ),
-          const SizedBox(height: 14),
-        ],
-        _sideBuilder('LEFT — calculate this', _leftAtoms, _leftOps),
-        const SizedBox(height: 12),
-        const Text('COMPARE — the test',
-            style: TextStyle(
-                color: _secondary,
-                fontSize: 12,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final op in kCompareOps)
-              ChoiceChip(
-                label: Text(compareLabel(op)),
-                selected: _compare == op,
-                onSelected: (_) => setState(() {
-                  _compare = op;
-                  _error = null;
-                }),
-                selectedColor: _blue,
-                labelStyle: TextStyle(
-                    color: _compare == op ? Colors.white : _text,
-                    fontSize: 12),
-                side: BorderSide.none,
-                backgroundColor: _panel,
-                visualDensity: VisualDensity.compact,
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        _sideBuilder(
-            _needsRight2
-                ? 'RIGHT — compare with this (lower bound)'
-                : 'RIGHT — compare with this',
-            _rightAtoms,
-            _rightOps),
-        if (_needsRight2) ...[
-          const SizedBox(height: 12),
-          _sideBuilder('AND — upper bound', _right2Atoms, _right2Ops),
-        ],
-        const SizedBox(height: 14),
-        _previewBox(
-          line.render(),
-          'This line is TRUE when ${compareMeaning(_compare)}.',
-          error: _error ?? typeErr,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Types — left: ${_side(_leftAtoms, _leftOps).type} • '
-          'right: ${_side(_rightAtoms, _rightOps).type}',
-          style: const TextStyle(color: _hint, fontSize: 11.5),
-        ),
-      ],
-    );
-  }
-
-  Widget _exampleChip(String label, SignalLine line) {
-    return ActionChip(
-      label: Text(label, style: const TextStyle(fontSize: 12)),
-      onPressed: () => _applyExample(line),
-      backgroundColor: Colors.white,
-      side: const BorderSide(color: _blue),
-      labelStyle: const TextStyle(color: _blue),
-      visualDensity: VisualDensity.compact,
-    );
-  }
-
-  Widget _sideBuilder(
-      String label, List<MathsAtom> atoms, List<String> ops) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label,
-            style: const TextStyle(
-                color: _secondary,
-                fontSize: 12,
-                fontWeight: FontWeight.bold)),
-        const SizedBox(height: 6),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: _panel,
-            borderRadius: BorderRadius.circular(4),
-            border: Border.all(color: _hairline),
-          ),
-          child: atoms.isEmpty
-              ? const Text('Nothing yet — add a term, number or time below',
-                  style: TextStyle(color: _hint, fontSize: 12))
-              : Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    for (var i = 0; i < atoms.length; i++) ...[
-                      _atomChip(atoms, ops, i),
-                      if (i < ops.length) _opChip(ops, i),
-                    ],
-                  ],
-                ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          runSpacing: 4,
-          children: [
-            _addButton('+ Term', () => _addTerm(atoms, ops)),
-            _addButton('+ Number', () => _addNumber(atoms, ops)),
-            _addButton('+ Time', () => _addTime(atoms, ops)),
-            _addButton('+ % Change', () => _addPctChange(atoms, ops)),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _atomChip(List<MathsAtom> atoms, List<String> ops, int i) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: _blue),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(atoms[i].render(),
-              style: const TextStyle(
-                  color: _text, fontSize: 12.5, fontWeight: FontWeight.w600)),
-          const SizedBox(width: 4),
-          InkWell(
-            onTap: () => _removeAtom(atoms, ops, i),
-            child: const Icon(Icons.close, size: 14, color: _red),
-          ),
+          const SizedBox(height: 18),
+          if (_ideLine != null)
+            _statusBox(
+              _ideLine!.render(),
+              'This line is TRUE when '
+              '${compareMeaning(_ideLine!.compare)}.',
+              ok: true,
+            )
+          else if (_ideError != null)
+            _statusBox(
+              _ideCtrl.text.trim().isEmpty ? '…' : _ideCtrl.text.trim(),
+              'Not saved — the answer of this line is not TRUE or '
+              'FALSE yet.',
+              error: _ideError,
+            )
+          else
+            const Text(
+              'Start typing — terms are suggested as you type, and '
+              'the ℹ button at the top shows every term.',
+              style: TextStyle(color: _hint, fontSize: 12.5),
+            ),
         ],
       ),
     );
   }
 
-  Widget _opChip(List<String> ops, int i) {
-    final op = ops[i] == '*' ? '×' : (ops[i] == '/' ? '÷' : ops[i]);
-    return InkWell(
-      onTap: () => _cycleOp(ops, i),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
-        decoration: BoxDecoration(
-          color: _blue,
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: Text(op,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12.5,
-                fontWeight: FontWeight.bold)),
-      ),
-    );
-  }
-
-  Widget _addButton(String label, VoidCallback onTap) {
-    return OutlinedButton(
-      onPressed: onTap,
-      style: OutlinedButton.styleFrom(
-        foregroundColor: _blue,
-        side: const BorderSide(color: _hairline),
-        visualDensity: VisualDensity.compact,
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      ),
-      child: Text(label, style: const TextStyle(fontSize: 12.5)),
-    );
-  }
-
-  Widget _previewBox(String formula, String meaning, {String? error}) {
+  Widget _statusBox(String formula, String meaning,
+      {bool ok = false, String? error}) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: _panel,
         borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: ok ? _blue : _hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(formula,
               style: const TextStyle(
-                  color: _text, fontSize: 13, fontFamily: 'monospace')),
+                  color: _text, fontSize: 13.5, fontFamily: 'monospace')),
           const SizedBox(height: 4),
           Text(meaning,
-              style: const TextStyle(color: _secondary, fontSize: 12)),
+              style: const TextStyle(color: _secondary, fontSize: 12.5)),
           if (error != null) ...[
             const SizedBox(height: 6),
             Text(error,
-                style: const TextStyle(color: _red, fontSize: 12)),
+                style: const TextStyle(color: _red, fontSize: 12.5)),
           ],
         ],
       ),
     );
   }
+}
 
-  // ---------------- Stock IDE UI ----------------
+/// ALL TERMS page — opened from the Stock IDE's ℹ button. Every
+/// term in the language, grouped by type, with its full name.
+/// Tap a term to add it to the line being written.
+class _TermsInfoScreen extends StatelessWidget {
+  const _TermsInfoScreen();
 
-  Widget _ideEditor() {
-    final suggestions = _ideSuggestions();
-    const signs = [
-      '>=', '<=', '>', '<', '=', '!=',
-      '+', '-', '×', '÷', '(', ')', ',',
-    ];
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        TextField(
-          controller: _ideCtrl,
-          maxLines: 3,
-          style: const TextStyle(
-              color: _text, fontSize: 13.5, fontFamily: 'monospace'),
-          decoration: const InputDecoration(
-            hintText: 'e.g. PCT_CHANGE(OPEN, PREV_CLOSE) >= 0.7',
-            border: OutlineInputBorder(),
-            isDense: true,
+  static const Color _text = Color(0xFF424242);
+  static const Color _secondary = Color(0xFF666666);
+  static const Color _blue = Color(0xFF387ED1);
+  static const Color _panel = Color(0xFFF7F7F7);
+  static const Color _hairline = Color(0xFFE0E0E0);
+
+  static const List<(String, String)> _groups = [
+    ('PRICE', 'Price terms — compare with prices or numbers'),
+    ('PERCENT', 'Percent terms (ready-made) — compare with numbers'),
+    ('TIME', 'Time terms — compare with clock times like 10:15'),
+    ('VOLUME', 'Volume terms — compare with volumes or numbers'),
+    ('NUMBER', 'Number terms — compare with plain numbers'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: const Text('All terms',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+        children: [
+          const Text(
+            'Every term in the Signal Maths language. Tap a term '
+            'to add it to your line. A term can only be compared '
+            'with the same type — price with price, time with '
+            'time — or with a plain number.',
+            style: TextStyle(color: _secondary, fontSize: 12.5),
           ),
-          onChanged: (_) => setState(_ideRefresh),
-        ),
-        if (suggestions.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          const Text('Suggested terms — tap to add:',
+          for (final (type, title) in _groups) ...[
+            const SizedBox(height: 18),
+            Text(title,
+                style: const TextStyle(
+                    color: _text,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: _hairline),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                children: [
+                  for (final t in kSignalTerms.where((x) => x.type == type))
+                    ListTile(
+                      dense: true,
+                      title: Text(t.code,
+                          style: const TextStyle(
+                              color: _text,
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.bold)),
+                      subtitle: Text(t.label,
+                          style: const TextStyle(
+                              color: _secondary, fontSize: 11.5)),
+                      trailing: const Icon(Icons.add_circle_outline,
+                          color: _blue, size: 19),
+                      onTap: () => Navigator.pop(context, t.code),
+                    ),
+                ],
+              ),
+            ),
+          ],
+          const SizedBox(height: 18),
+          const Text('One special function',
               style: TextStyle(
-                  color: _secondary,
-                  fontSize: 12,
+                  color: _text,
+                  fontSize: 13.5,
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [
-              for (final s in suggestions)
-                ActionChip(
-                  label: Text(s, style: const TextStyle(fontSize: 12)),
-                  onPressed: () => _insertSuggestion(s),
-                  backgroundColor: Colors.white,
-                  side: const BorderSide(color: _blue),
-                  labelStyle: const TextStyle(color: _blue),
-                  visualDensity: VisualDensity.compact,
-                ),
-            ],
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _panel,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: _hairline),
+            ),
+            child: const Text(
+              'PCT_CHANGE(A, B) = (A − B) ÷ B × 100 — the % change '
+              'of A from B.\nExample: PCT_CHANGE(OPEN, PREV_CLOSE) '
+              '>= 0.7 means the stock opened at least 0.7% above '
+              'yesterday\'s close.',
+              style: TextStyle(color: _secondary, fontSize: 12.5),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Text('Compare signs — the line\'s answer is TRUE when…',
+              style: TextStyle(
+                  color: _text,
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.bold)),
+          const SizedBox(height: 6),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              border: Border.all(color: _hairline),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(
+              children: [
+                for (final op in kCompareOps)
+                  ListTile(
+                    dense: true,
+                    title: Text(
+                        op == compareLabel(op) ? op : '$op  (${compareLabel(op)})',
+                        style: const TextStyle(
+                            color: _text,
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold)),
+                    subtitle: Text(compareMeaning(op),
+                        style: const TextStyle(
+                            color: _secondary, fontSize: 11.5)),
+                  ),
+              ],
+            ),
           ),
         ],
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [
-            for (final s in signs)
-              OutlinedButton(
-                onPressed: () => _insertSign(s),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _text,
-                  side: const BorderSide(color: _hairline),
-                  visualDensity: VisualDensity.compact,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: Text(s, style: const TextStyle(fontSize: 13)),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        if (_ideLine != null)
-          _previewBox(
-            _ideLine!.render(),
-            'This line is TRUE when ${compareMeaning(_ideLine!.compare)}.',
-          )
-        else if (_ideError != null)
-          _previewBox(
-            _ideCtrl.text.trim().isEmpty ? '…' : _ideCtrl.text.trim(),
-            'Not ready yet.',
-            error: _ideError,
-          )
-        else
-          const Text(
-            'Start typing — terms are suggested as you type. '
-            'One line: LEFT, a compare sign, RIGHT.',
-            style: TextStyle(color: _hint, fontSize: 12),
-          ),
-      ],
+      ),
     );
   }
 }

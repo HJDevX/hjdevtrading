@@ -260,7 +260,7 @@ class _Parser {
       final t = _peek;
       if (t == null) {
         throw _LexError(
-            'The line needs a compare sign (>=, >, = …) and a right side');
+            'This line\'s answer is not TRUE or FALSE yet — it needs a compare sign (>=, >, = …) and a right side');
       }
       throw _LexError(
           'After the left side I expected a compare sign (>=, >, = …), but found "${t.text}"');
