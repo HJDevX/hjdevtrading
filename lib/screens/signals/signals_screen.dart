@@ -241,6 +241,7 @@ class _SignalsScreenState extends State<SignalsScreen> {
               ),
               const SizedBox(height: 6),
               Text(
+                '${s.variables.isNotEmpty ? '${s.variables.length} variable${s.variables.length == 1 ? '' : 's'} • ' : ''}'
                 '${s.indicators.length} indicator${s.indicators.length == 1 ? '' : 's'}'
                 ' • ${s.lineCount} maths line${s.lineCount == 1 ? '' : 's'}'
                 ' • Qty ${s.qty}'

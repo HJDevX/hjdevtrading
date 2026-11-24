@@ -20,6 +20,15 @@ class SignalParseResult {
   const SignalParseResult.fail(this.error) : line = null;
 }
 
+/// Result of parsing a VALUE (a calculation with no compare) —
+/// used for int/double variable values.
+class SignalMathsResult {
+  final MathsSide? side;
+  final String? error;
+  const SignalMathsResult.ok(this.side) : error = null;
+  const SignalMathsResult.fail(this.error) : side = null;
+}
+
 const Set<String> _compareWords = {
   'CROSSED_ABOVE',
   'CROSSED_BELOW',
@@ -157,8 +166,21 @@ List<_Tok> _lex(String input) {
 
 class _Parser {
   final List<_Tok> toks;
+  final Map<String, SignalVariable> varsByUpper;
   var pos = 0;
-  _Parser(this.toks);
+  _Parser(this.toks, List<SignalVariable> variables)
+      : varsByUpper = {
+          for (final v in variables) v.name.toUpperCase(): v,
+        };
+
+  /// A PCT_CHANGE argument or a maths atom name: a term code, or
+  /// the declared name of one of the signal's number variables.
+  String? _valueName(_Tok t) {
+    if (signalTermByCode(t.text) != null) return t.text;
+    final v = varsByUpper[t.text];
+    if (v != null && !v.isBool && !v.isText) return v.name;
+    return null;
+  }
 
   _Tok? get _peek => pos < toks.length ? toks[pos] : null;
 
@@ -203,8 +225,8 @@ class _Parser {
           }
           pos++;
           final a = _peek;
-          if (a == null || a.kind != 'ident' ||
-              signalTermByCode(a.text) == null) {
+          final aName = (a != null && a.kind == 'ident') ? _valueName(a) : null;
+          if (aName == null) {
             throw _LexError(
                 'Inside PCT_CHANGE, first pick a term like OPEN');
           }
@@ -215,8 +237,8 @@ class _Parser {
           }
           pos++;
           final b = _peek;
-          if (b == null || b.kind != 'ident' ||
-              signalTermByCode(b.text) == null) {
+          final bName = (b != null && b.kind == 'ident') ? _valueName(b) : null;
+          if (bName == null) {
             throw _LexError(
                 'Inside PCT_CHANGE, after the comma pick the base term like PREV_CLOSE');
           }
@@ -225,15 +247,28 @@ class _Parser {
             throw _LexError('PCT_CHANGE is missing its closing bracket ")"');
           }
           pos++;
-          return MathsAtom.pctChange(a.text, b.text);
+          return MathsAtom.pctChange(aName, bName);
         }
         final term = signalTermByCode(t.text);
-        if (term == null) {
-          throw _LexError(
-              'Unknown term "${t.text}" — tap one of the suggested terms');
+        if (term != null) {
+          pos++;
+          return MathsAtom.term(t.text);
         }
-        pos++;
-        return MathsAtom.term(t.text);
+        final v = varsByUpper[t.text];
+        if (v != null) {
+          if (v.isText) {
+            throw _LexError(
+                '"${v.name}" is a text (String) variable — text cannot be used in maths');
+          }
+          if (v.isBool) {
+            throw _LexError(
+                '"${v.name}" is a TRUE/FALSE (bool) variable — write it alone as the whole line');
+          }
+          pos++;
+          return MathsAtom.variable(v.name, v.valueType);
+        }
+        throw _LexError(
+            'Unknown term "${t.text}" — tap one of the suggested terms');
       case 'lparen':
         throw _LexError(
             'Brackets are only used inside PCT_CHANGE(...) for now');
@@ -252,6 +287,21 @@ class _Parser {
       atoms.add(_parseAtom());
     }
     return MathsSide(atoms: atoms, ops: ops);
+  }
+
+  /// Parse a VALUE only (no compare allowed) — for the values
+  /// of int/double variables.
+  MathsSide parseSideOnly() {
+    final side = _parseSide();
+    if (pos < toks.length) {
+      if (_atCompare) {
+        throw _LexError(
+            'A value is only a calculation — remove the compare sign (a compare makes a TRUE/FALSE line, not a value)');
+      }
+      throw _LexError(
+          'Extra words at the end ("${toks[pos].text}") — a value is one calculation');
+    }
+    return side;
   }
 
   SignalLine parse() {
@@ -291,10 +341,13 @@ class _Parser {
   }
 }
 
-/// Parse one typed maths line. On success the line is complete
-/// and type-checked; on failure [SignalParseResult.error] says
-/// exactly what to fix, in plain words.
-SignalParseResult parseSignalLine(String input) {
+/// Parse one typed maths line. [variables] are the signal's own
+/// named variables: number variables can be used like terms, and
+/// a bool variable written ALONE is a complete line. On success
+/// the line is complete and type-checked; on failure
+/// [SignalParseResult.error] says exactly what to fix.
+SignalParseResult parseSignalLine(String input,
+    {List<SignalVariable> variables = const []}) {
   final text = input.trim();
   if (text.isEmpty) {
     return const SignalParseResult.fail(
@@ -302,7 +355,15 @@ SignalParseResult parseSignalLine(String input) {
   }
   try {
     final toks = _lex(text);
-    final line = _Parser(toks).parse();
+    // A bool variable alone is a whole TRUE/FALSE line.
+    if (toks.length == 1 && toks.first.kind == 'ident') {
+      for (final v in variables) {
+        if (v.isBool && v.name.toUpperCase() == toks.first.text) {
+          return SignalParseResult.ok(SignalLine(boolVar: v.name));
+        }
+      }
+    }
+    final line = _Parser(toks, variables).parse();
     if (!line.isComplete) {
       return const SignalParseResult.fail('The line is not complete yet');
     }
@@ -314,5 +375,29 @@ SignalParseResult parseSignalLine(String input) {
   } catch (_) {
     return const SignalParseResult.fail(
         'Something in this line could not be read — check it and try again');
+  }
+}
+
+/// Parse a VALUE (a calculation with no compare sign) — the
+/// value of an int/double variable.
+SignalMathsResult parseSignalMaths(String input,
+    {List<SignalVariable> variables = const []}) {
+  final text = input.trim();
+  if (text.isEmpty) {
+    return const SignalMathsResult.fail(
+        'Type a value, e.g. PRICE or PCT_CHANGE(OPEN, PREV_CLOSE)');
+  }
+  try {
+    final toks = _lex(text);
+    final side = _Parser(toks, variables).parseSideOnly();
+    if (side.isEmpty) {
+      return const SignalMathsResult.fail('The value is empty');
+    }
+    return SignalMathsResult.ok(side);
+  } on _LexError catch (e) {
+    return SignalMathsResult.fail(e.message);
+  } catch (_) {
+    return const SignalMathsResult.fail(
+        'Something in this value could not be read — check it and try again');
   }
 }

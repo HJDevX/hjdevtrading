@@ -46,6 +46,7 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
   String? _instrumentType;
 
   String _side = 'B';
+  List<SignalVariable> _variables = [];
   List<SignalIndicator> _indicators = [];
   List<Scrip> _results = [];
   int _searchSeq = 0;
@@ -66,6 +67,7 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
       _displayName = e.displayName;
       _instrumentType = e.instrumentType;
       _side = e.side;
+      _variables = List.of(e.variables);
       _indicators = List.of(e.indicators);
     }
   }
@@ -239,8 +241,89 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
     return Navigator.push<SignalLine>(
       context,
       MaterialPageRoute(
-          builder: (_) => _LineEditorScreen(existing: existing)),
+          builder: (_) => _LineEditorScreen(
+              existing: existing, variables: _variables)),
     );
+  }
+
+  // ---------------- Variables ----------------
+
+  Future<void> _addVariable() async {
+    final v = await Navigator.push<SignalVariable>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _VariableEditorScreen(
+          contextVars: List.of(_variables),
+          takenNames: [for (final x in _variables) x.name],
+        ),
+      ),
+    );
+    if (v != null && mounted) {
+      setState(() => _variables = [..._variables, v]);
+    }
+  }
+
+  Future<void> _editVariable(int i) async {
+    final v = await Navigator.push<SignalVariable>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _VariableEditorScreen(
+          existing: _variables[i],
+          contextVars: _variables.sublist(0, i),
+          takenNames: [
+            for (var j = 0; j < _variables.length; j++)
+              if (j != i) _variables[j].name,
+          ],
+        ),
+      ),
+    );
+    if (v != null && mounted) {
+      setState(() {
+        final updated = List.of(_variables);
+        updated[i] = v;
+        _variables = updated;
+      });
+    }
+  }
+
+  /// True when a maths line or another variable uses [name] —
+  /// such a variable cannot be deleted until the use is removed.
+  bool _variableUsed(String name) {
+    bool sideUses(MathsSide? s) =>
+        s != null &&
+        s.atoms.any((a) =>
+            (a.kind == 'VAR' && a.term == name) ||
+            a.pctA == name ||
+            a.pctB == name);
+    bool lineUses(SignalLine l) =>
+        l.boolVar == name ||
+        sideUses(l.left) ||
+        sideUses(l.right) ||
+        sideUses(l.right2);
+    for (final ind in _indicators) {
+      for (final l in ind.lines) {
+        if (lineUses(l)) return true;
+      }
+    }
+    for (final v in _variables) {
+      if (v.name == name) continue;
+      if (sideUses(v.maths)) return true;
+      final l = v.line;
+      if (l != null && lineUses(l)) return true;
+    }
+    return false;
+  }
+
+  void _removeVariable(int i) {
+    final name = _variables[i].name;
+    if (_variableUsed(name)) {
+      _snack(
+          '"$name" is used in a maths line or another variable — remove it there first');
+      return;
+    }
+    setState(() {
+      _variables = List.of(_variables)..removeAt(i);
+    });
   }
 
   Future<void> _editLine(int indIdx, SignalLine? existing, int? lineIdx) async {
@@ -351,6 +434,7 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
       tpPct: tp,
       slPct: sl,
       enabled: e?.enabled ?? true,
+      variables: _variables,
       indicators: indicators,
       createdMs: e?.createdMs ?? now,
       updatedMs: now,
@@ -479,6 +563,78 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
             ],
           ),
           const SizedBox(height: 22),
+          Row(
+            children: [
+              const Text('Variables',
+                  style: TextStyle(
+                      color: _text,
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold)),
+              const Spacer(),
+              OutlinedButton.icon(
+                onPressed: _addVariable,
+                icon: const Icon(Icons.add, size: 17),
+                label: const Text('Add variable'),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: _blue,
+                    side: const BorderSide(color: _blue)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Name your own values, Dart-style — give a name, a type '
+            'and a value, e.g.  double stockCurrent = PRICE;  '
+            'The value is calculated live and the name can be used '
+            'inside maths lines. Types: int (whole number), '
+            'double (decimal number), String (text), '
+            'bool (TRUE/FALSE).',
+            style: TextStyle(color: _hint, fontSize: 11.5),
+          ),
+          const SizedBox(height: 8),
+          if (_variables.isEmpty)
+            const Text(
+              'No variables yet — they are optional. Terms like '
+              'PRICE and OPEN always work directly.',
+              style: TextStyle(color: _hint, fontSize: 12.5),
+            ),
+          for (var i = 0; i < _variables.length; i++)
+            Container(
+              margin: const EdgeInsets.only(bottom: 8),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: _panel,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: _hairline),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(_variables[i].declaration(),
+                        style: const TextStyle(
+                            color: _text,
+                            fontSize: 13,
+                            fontFamily: 'monospace')),
+                  ),
+                  IconButton(
+                    tooltip: 'Edit variable',
+                    icon: const Icon(Icons.edit_outlined,
+                        color: _secondary, size: 18),
+                    onPressed: () => _editVariable(i),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  IconButton(
+                    tooltip: 'Delete variable',
+                    icon: const Icon(Icons.delete_outline,
+                        color: _red, size: 18),
+                    onPressed: () => _removeVariable(i),
+                    visualDensity: VisualDensity.compact,
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 14),
           Row(
             children: [
               const Text('Indicators',
@@ -790,7 +946,8 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
 /// reason shown on the page.
 class _LineEditorScreen extends StatefulWidget {
   final SignalLine? existing;
-  const _LineEditorScreen({this.existing});
+  final List<SignalVariable> variables;
+  const _LineEditorScreen({this.existing, this.variables = const []});
 
   @override
   State<_LineEditorScreen> createState() => _LineEditorScreenState();
@@ -832,12 +989,13 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
       _ideError = null;
       return;
     }
-    final r = parseSignalLine(text);
+    final r = parseSignalLine(text, variables: widget.variables);
     _ideLine = r.line;
     _ideError = r.error;
   }
 
-  /// Term suggestions for the word currently being typed.
+  /// Term suggestions for the word currently being typed —
+  /// language terms plus this signal's own variable names.
   List<String> _ideSuggestions() {
     final text = _ideCtrl.text;
     var cursor = _ideCtrl.selection.baseOffset;
@@ -856,12 +1014,15 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
       'AND',
     ];
     final all = <String>[
+      for (final v in widget.variables) v.name,
       for (final t in kSignalTerms) t.code,
       ...words,
     ];
     return [
       for (final c in all)
-        if (c.startsWith(partial) && c != partial) c,
+        if (c.toUpperCase().startsWith(partial) &&
+            c.toUpperCase() != partial)
+          c,
     ].take(8).toList();
   }
 
@@ -913,7 +1074,8 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
   Future<void> _openTerms() async {
     final code = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (_) => const _TermsInfoScreen()),
+      MaterialPageRoute(
+          builder: (_) => _TermsInfoScreen(variables: widget.variables)),
     );
     if (code != null && mounted) _insertSuggestion(code);
   }
@@ -922,7 +1084,7 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
   /// complete LEFT compare RIGHT line — can be saved. Anything
   /// else stays on this page with the reason shown.
   void _save() {
-    final r = parseSignalLine(_ideCtrl.text);
+    final r = parseSignalLine(_ideCtrl.text, variables: widget.variables);
     if (r.line == null) {
       setState(() => _ideError = r.error);
       return;
@@ -1115,7 +1277,8 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
 /// term in the language, grouped by type, with its full name.
 /// Tap a term to add it to the line being written.
 class _TermsInfoScreen extends StatelessWidget {
-  const _TermsInfoScreen();
+  final List<SignalVariable> variables;
+  const _TermsInfoScreen({this.variables = const []});
 
   static const Color _text = Color(0xFF424242);
   static const Color _secondary = Color(0xFF666666);
@@ -1149,6 +1312,38 @@ class _TermsInfoScreen extends StatelessWidget {
             'time — or with a plain number.',
             style: TextStyle(color: _secondary, fontSize: 12.5),
           ),
+          if (variables.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const Text('Your variables in this signal',
+                style: TextStyle(
+                    color: _text,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                border: Border.all(color: _hairline),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Column(
+                children: [
+                  for (final v in variables)
+                    ListTile(
+                      dense: true,
+                      title: Text(v.declaration(),
+                          style: const TextStyle(
+                              color: _text,
+                              fontSize: 12.5,
+                              fontFamily: 'monospace')),
+                      trailing: const Icon(Icons.add_circle_outline,
+                          color: _blue, size: 19),
+                      onTap: () => Navigator.pop(context, v.name),
+                    ),
+                ],
+              ),
+            ),
+          ],
           for (final (type, title) in _groups) ...[
             const SizedBox(height: 18),
             Text(title,
@@ -1237,6 +1432,434 @@ class _TermsInfoScreen extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+/// VARIABLE EDITOR — create or edit one of the signal's named
+/// variables, Dart-style: a name, a type (int / double / String /
+/// bool) and a value. Number variables hold a calculation typed
+/// in the Stock IDE (no compare sign); a bool variable holds a
+/// whole TRUE/FALSE maths line; a String variable holds text.
+/// A variable may use the variables listed ABOVE it in the
+/// signal (never itself or later ones), so values can never
+/// chase each other in a circle. Name and type are fixed after
+/// creation — delete and re-create to change them.
+class _VariableEditorScreen extends StatefulWidget {
+  final SignalVariable? existing;
+  final List<SignalVariable> contextVars;
+  final List<String> takenNames;
+  const _VariableEditorScreen({
+    this.existing,
+    required this.contextVars,
+    required this.takenNames,
+  });
+
+  @override
+  State<_VariableEditorScreen> createState() => _VariableEditorScreenState();
+}
+
+class _VariableEditorScreenState extends State<_VariableEditorScreen> {
+  static const Color _text = Color(0xFF424242);
+  static const Color _secondary = Color(0xFF666666);
+  static const Color _hint = Color(0xFF9B9B9B);
+  static const Color _blue = Color(0xFF387ED1);
+  static const Color _panel = Color(0xFFF7F7F7);
+  static const Color _hairline = Color(0xFFE0E0E0);
+  static const Color _red = Color(0xFFE53935);
+
+  final TextEditingController _nameCtrl = TextEditingController();
+  final TextEditingController _valueCtrl = TextEditingController();
+  String _dartType = 'double';
+  String? _error;
+  MathsSide? _checkSide;
+  SignalLine? _checkLine;
+
+  bool get _editing => widget.existing != null;
+  bool get _isBool => _dartType == 'bool';
+  bool get _isText => _dartType == 'String';
+  bool get _isNumeric => !_isBool && !_isText;
+
+  @override
+  void initState() {
+    super.initState();
+    final e = widget.existing;
+    if (e != null) {
+      _dartType = e.dartType;
+      _nameCtrl.text = e.name;
+      if (e.isBool) {
+        _valueCtrl.text = e.line?.formula ?? '';
+      } else if (e.isText) {
+        _valueCtrl.text = e.text ?? '';
+      } else {
+        _valueCtrl.text = e.maths?.formula ?? '';
+      }
+      _refresh();
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _valueCtrl.dispose();
+    super.dispose();
+  }
+
+  void _refresh() {
+    _error = null;
+    _checkSide = null;
+    _checkLine = null;
+    final value = _valueCtrl.text;
+    if (value.trim().isEmpty || _isText) return;
+    if (_isBool) {
+      final r = parseSignalLine(value, variables: widget.contextVars);
+      _checkLine = r.line;
+      _error = r.error;
+    } else {
+      final r = parseSignalMaths(value, variables: widget.contextVars);
+      _checkSide = r.side;
+      _error = r.error;
+      if (r.side != null && r.side!.type == 'TIME') {
+        _error = 'A number variable cannot hold a clock time — '
+            'use a price, percent, volume or number value';
+        _checkSide = null;
+      }
+    }
+  }
+
+  List<String> _suggestions() {
+    final text = _valueCtrl.text;
+    var cursor = _valueCtrl.selection.baseOffset;
+    if (cursor < 0 || cursor > text.length) cursor = text.length;
+    final before = text.substring(0, cursor);
+    final m = RegExp(r'[A-Za-z_][A-Za-z0-9_]*$').firstMatch(before);
+    if (m == null) return const [];
+    final partial = m.group(0)!.toUpperCase();
+    final all = <String>[
+      for (final v in widget.contextVars) v.name,
+      for (final t in kSignalTerms) t.code,
+      'PCT_CHANGE',
+      if (_isBool) ...[
+        'CROSSED_ABOVE',
+        'CROSSED_BELOW',
+        'TOUCHED',
+        'BETWEEN',
+        'OUTSIDE',
+        'AND',
+      ],
+    ];
+    return [
+      for (final c in all)
+        if (c.toUpperCase().startsWith(partial) &&
+            c.toUpperCase() != partial)
+          c,
+    ].take(8).toList();
+  }
+
+  void _insert(String insert, {bool replaceWord = false}) {
+    final text = _valueCtrl.text;
+    var cursor = _valueCtrl.selection.baseOffset;
+    if (cursor < 0 || cursor > text.length) cursor = text.length;
+    var start = cursor;
+    if (replaceWord) {
+      final before = text.substring(0, cursor);
+      final m = RegExp(r'[A-Za-z_][A-Za-z0-9_]*$').firstMatch(before);
+      if (m != null) start = m.start;
+    }
+    final newText = text.replaceRange(start, cursor, insert);
+    setState(() {
+      _valueCtrl.value = TextEditingValue(
+        text: newText,
+        selection:
+            TextSelection.collapsed(offset: start + insert.length),
+      );
+      _refresh();
+    });
+  }
+
+  void _save() {
+    final name = _editing ? widget.existing!.name : _nameCtrl.text.trim();
+    if (!_editing) {
+      final nameErr = signalVariableNameError(name, widget.takenNames);
+      if (nameErr != null) {
+        setState(() => _error = nameErr);
+        return;
+      }
+    }
+    if (_isText) {
+      Navigator.pop(
+          context,
+          SignalVariable(
+              name: name, dartType: _dartType, text: _valueCtrl.text));
+      return;
+    }
+    if (_isBool) {
+      final r =
+          parseSignalLine(_valueCtrl.text, variables: widget.contextVars);
+      if (r.line == null) {
+        setState(() => _error = r.error);
+        return;
+      }
+      Navigator.pop(
+          context,
+          SignalVariable(name: name, dartType: _dartType, line: r.line));
+      return;
+    }
+    final r =
+        parseSignalMaths(_valueCtrl.text, variables: widget.contextVars);
+    if (r.side == null) {
+      setState(() => _error = r.error);
+      return;
+    }
+    if (r.side!.type == 'TIME') {
+      setState(() => _error =
+          'A number variable cannot hold a clock time — use a price, percent, volume or number value');
+      return;
+    }
+    Navigator.pop(
+        context,
+        SignalVariable(name: name, dartType: _dartType, maths: r.side));
+  }
+
+  String get _typeExplainer {
+    switch (_dartType) {
+      case 'int':
+        return 'Whole number. The value is a calculation; any '
+            'fraction is dropped when the signal runs. Good for '
+            'counts, minutes and volumes.';
+      case 'String':
+        return 'Fixed text. Text cannot be used inside maths — '
+            'it is for names, notes and messages.';
+      case 'bool':
+        return 'TRUE or FALSE. The value is a whole maths line '
+            'with a compare sign. Inside an indicator, write the '
+            'variable name alone as a line to use it.';
+      default:
+        return 'Decimal number — in Dart this is the type for '
+            'prices and percents (other languages call it float). '
+            'The value is a calculation, e.g. PRICE or '
+            'PCT_CHANGE(OPEN, PREV_CLOSE).';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final suggestions = _suggestions();
+    final signs = _isBool
+        ? const ['>=', '<=', '>', '<', '=', '!=', '+', '-', '×', '÷', '(', ')', ',']
+        : const ['+', '-', '×', '÷', '(', ')', ','];
+    return Scaffold(
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: Text(_editing ? 'Edit variable' : 'Add variable',
+            style: const TextStyle(fontWeight: FontWeight.bold)),
+        actions: [
+          TextButton(
+            onPressed: _save,
+            child: const Text('SAVE',
+                style: TextStyle(
+                    color: _blue,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14)),
+          ),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
+        children: [
+          if (_editing) ...[
+            Text(
+              '${widget.existing!.dartType} ${widget.existing!.name}',
+              style: const TextStyle(
+                  color: _text,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Name and type are fixed after creation — delete '
+              'the variable and create it again to change them. '
+              'Only its value can be edited here.',
+              style: TextStyle(color: _hint, fontSize: 12),
+            ),
+          ] else ...[
+            TextField(
+              controller: _nameCtrl,
+              style: const TextStyle(color: _text, fontSize: 15),
+              decoration: const InputDecoration(
+                labelText: 'Variable name',
+                hintText: 'e.g. stockCurrent',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+            const SizedBox(height: 14),
+            const Text('Type',
+                style: TextStyle(
+                    color: _text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final t in const ['int', 'double', 'String', 'bool'])
+                  ChoiceChip(
+                    label: Text(t),
+                    selected: _dartType == t,
+                    onSelected: (_) => setState(() {
+                      _dartType = t;
+                      _refresh();
+                    }),
+                    selectedColor: _blue,
+                    labelStyle: TextStyle(
+                        color: _dartType == t ? Colors.white : _text,
+                        fontSize: 13),
+                    side: BorderSide.none,
+                    backgroundColor: _panel,
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 10),
+          Text(_typeExplainer,
+              style: const TextStyle(color: _secondary, fontSize: 12.5)),
+          const SizedBox(height: 16),
+          Text(
+            _isText
+                ? 'Value — text'
+                : _isBool
+                    ? 'Value — a TRUE/FALSE maths line'
+                    : 'Value — a calculation (no compare sign)',
+            style: const TextStyle(
+                color: _text, fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _valueCtrl,
+            maxLines: _isText ? 2 : 3,
+            style: TextStyle(
+                color: _text,
+                fontSize: 14.5,
+                fontFamily: _isText ? null : 'monospace'),
+            decoration: InputDecoration(
+              hintText: _isText
+                  ? 'e.g. morning only'
+                  : _isBool
+                      ? 'e.g. PCT_CHANGE(OPEN, PREV_CLOSE) >= 0.7'
+                      : 'e.g. PRICE',
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) => setState(_refresh),
+          ),
+          if (!_isText) ...[
+            if (suggestions.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const Text('Suggestions — tap to add:',
+                  style: TextStyle(
+                      color: _secondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final s in suggestions)
+                    ActionChip(
+                      label:
+                          Text(s, style: const TextStyle(fontSize: 12.5)),
+                      onPressed: () => _insert(
+                          s == 'PCT_CHANGE' ? 'PCT_CHANGE(' : s,
+                          replaceWord: true),
+                      backgroundColor: Colors.white,
+                      side: const BorderSide(color: _blue),
+                      labelStyle: const TextStyle(color: _blue),
+                      visualDensity: VisualDensity.compact,
+                    ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final s in signs)
+                  OutlinedButton(
+                    onPressed: () =>
+                        _insert(s.length > 1 ? ' $s ' : s),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: _text,
+                      side: const BorderSide(color: _hairline),
+                      visualDensity: VisualDensity.compact,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: Text(s, style: const TextStyle(fontSize: 14)),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          if (_error != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _panel,
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(_error!,
+                  style: const TextStyle(color: _red, fontSize: 12.5)),
+            )
+          else if (_checkSide != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _panel,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: _blue),
+              ),
+              child: Text(
+                '$_dartType ${_nameCtrl.text.trim()} = '
+                '${_checkSide!.formula};',
+                style: const TextStyle(
+                    color: _text, fontSize: 13, fontFamily: 'monospace'),
+              ),
+            )
+          else if (_checkLine != null)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: _panel,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: _blue),
+              ),
+              child: Text(
+                'This value is TRUE when '
+                '${compareMeaning(_checkLine!.compare)}.',
+                style:
+                    const TextStyle(color: _secondary, fontSize: 12.5),
+              ),
+            ),
+          if (widget.contextVars.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Text(
+              'This variable can use: '
+              '${widget.contextVars.map((v) => v.name).join(', ')} '
+              '(the variables above it) plus all terms.',
+              style: const TextStyle(color: _hint, fontSize: 11.5),
+            ),
+          ],
         ],
       ),
     );

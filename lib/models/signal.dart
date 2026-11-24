@@ -149,14 +149,16 @@ String fmtClockShort(int minutes) {
 // ---------------- Maths atoms & sides ----------------
 
 /// One piece of a maths side: a TERM, a typed NUMBER, a clock TIME,
-/// or PCT_CHANGE(term, term).
+/// PCT_CHANGE(term, term), or a VAR — one of the signal's own
+/// named variables (see SignalVariable).
 class MathsAtom {
-  final String kind; // TERM | NUMBER | TIME | PCT_CHANGE
-  final String? term; // for TERM
+  final String kind; // TERM | NUMBER | TIME | PCT_CHANGE | VAR
+  final String? term; // for TERM, and the variable name for VAR
   final double? number; // for NUMBER
   final int? timeMinutes; // for TIME (minutes of day: 10:15 = 615)
   final String? pctA; // for PCT_CHANGE: (pctA − pctB) / pctB × 100
   final String? pctB;
+  final String? varType; // for VAR: the variable's value type
 
   const MathsAtom({
     required this.kind,
@@ -165,6 +167,7 @@ class MathsAtom {
     this.timeMinutes,
     this.pctA,
     this.pctB,
+    this.varType,
   });
 
   factory MathsAtom.term(String code) => MathsAtom(kind: 'TERM', term: code);
@@ -173,12 +176,16 @@ class MathsAtom {
       MathsAtom(kind: 'TIME', timeMinutes: minutes);
   factory MathsAtom.pctChange(String a, String b) =>
       MathsAtom(kind: 'PCT_CHANGE', pctA: a, pctB: b);
+  factory MathsAtom.variable(String name, String valueType) =>
+      MathsAtom(kind: 'VAR', term: name, varType: valueType);
 
   /// The data type this atom produces.
   String get type {
     switch (kind) {
       case 'TERM':
         return signalTermByCode(term ?? '')?.type ?? 'NUMBER';
+      case 'VAR':
+        return varType ?? 'NUMBER';
       case 'TIME':
         return 'TIME';
       case 'PCT_CHANGE':
@@ -191,6 +198,7 @@ class MathsAtom {
   String render() {
     switch (kind) {
       case 'TERM':
+      case 'VAR':
         return term ?? '?';
       case 'NUMBER':
         final v = number ?? 0;
@@ -211,6 +219,7 @@ class MathsAtom {
         if (timeMinutes != null) 'time': timeMinutes,
         if (pctA != null) 'pctA': pctA,
         if (pctB != null) 'pctB': pctB,
+        if (varType != null) 'varType': varType,
       };
 
   factory MathsAtom.fromJson(Map<String, dynamic> j) => MathsAtom(
@@ -220,6 +229,7 @@ class MathsAtom {
         timeMinutes: (j['time'] as num?)?.toInt(),
         pctA: j['pctA']?.toString(),
         pctB: j['pctB']?.toString(),
+        varType: j['varType']?.toString(),
       );
 }
 
@@ -287,31 +297,37 @@ bool signalTypesCompatible(String a, String b) =>
 // ---------------- Lines, indicators, signal ----------------
 
 /// One maths line: LEFT compare RIGHT (→ TRUE/FALSE). BETWEEN and
-/// OUTSIDE use a second right side as the upper bound.
+/// OUTSIDE use a second right side as the upper bound. A line can
+/// also be a whole bool VARIABLE by name ([boolVar]) — its answer
+/// is that variable's TRUE/FALSE value.
 class SignalLine {
   final MathsSide left;
   final String compare;
   final MathsSide right;
   final MathsSide? right2;
   final double weightPct; // share inside its indicator (equal default)
+  final String? boolVar; // whole-line bool variable name, if any
 
   const SignalLine({
-    required this.left,
-    required this.compare,
-    required this.right,
+    this.left = const MathsSide(),
+    this.compare = '>=',
+    this.right = const MathsSide(),
     this.right2,
     this.weightPct = 0,
+    this.boolVar,
   });
 
   bool get needsRight2 => compare == 'BETWEEN' || compare == 'OUTSIDE';
 
   bool get isComplete =>
-      !left.isEmpty &&
-      !right.isEmpty &&
-      (!needsRight2 || (right2 != null && !right2!.isEmpty));
+      boolVar != null ||
+      (!left.isEmpty &&
+          !right.isEmpty &&
+          (!needsRight2 || (right2 != null && !right2!.isEmpty)));
 
   /// Null when the line's types are fine, else the problem in words.
   String? get typeError {
+    if (boolVar != null) return null;
     if (left.isEmpty || right.isEmpty) return null;
     if (!signalTypesCompatible(left.type, right.type)) {
       return 'Left side is ${left.type} but right side is ${right.type} — they must match';
@@ -325,6 +341,7 @@ class SignalLine {
   }
 
   String render() {
+    if (boolVar != null) return boolVar!;
     final base = '${left.render()} ${compareLabel(compare)} ${right.render()}';
     if (needsRight2) return '$base and ${right2?.render() ?? '…'}';
     return base;
@@ -332,6 +349,7 @@ class SignalLine {
 
   /// The whole line as typeable text for the Stock IDE editor.
   String get formula {
+    if (boolVar != null) return boolVar!;
     final base = '${left.formula} $compare ${right.formula}';
     if (needsRight2) return '$base AND ${right2?.formula ?? ''}';
     return base;
@@ -343,6 +361,7 @@ class SignalLine {
         right: right,
         right2: right2,
         weightPct: weightPct ?? this.weightPct,
+        boolVar: boolVar,
       );
 
   Map<String, dynamic> toJson() => {
@@ -351,6 +370,7 @@ class SignalLine {
         'right': right.toJson(),
         if (right2 != null) 'right2': right2!.toJson(),
         'weightPct': weightPct,
+        if (boolVar != null) 'boolVar': boolVar,
       };
 
   factory SignalLine.fromJson(Map<String, dynamic> j) => SignalLine(
@@ -364,7 +384,102 @@ class SignalLine {
             : MathsSide.fromJson(
                 Map<String, dynamic>.from(j['right2'] as Map)),
         weightPct: (j['weightPct'] as num?)?.toDouble() ?? 0,
+        boolVar: j['boolVar']?.toString(),
       );
+}
+
+/// A named VARIABLE the user creates inside a signal, Dart-style:
+/// give it a name and a type, and give it a value. The value is
+/// re-calculated from the live price every tick, and the name can
+/// then be used inside maths lines and other variables.
+///
+///   double stockCurrent = PRICE;
+///   double gapPct = PCT_CHANGE(OPEN, PREV_CLOSE);
+///   int mins = MINUTES_SINCE_OPEN;
+///   bool gapOk = PCT_CHANGE(OPEN, PREV_CLOSE) >= 0.7;
+///   String note = "morning only";
+///
+/// Types mirror Dart: int (whole number), double (decimal
+/// number — Dart's name for what other languages call float),
+/// String (text), bool (TRUE/FALSE). int/double variables hold a
+/// maths calculation; a bool variable holds a whole maths line;
+/// a String variable holds fixed text (usable in messages and
+/// logs later — text cannot be used inside maths).
+class SignalVariable {
+  final String name;
+  final String dartType; // int | double | String | bool
+  final MathsSide? maths; // value for int/double
+  final SignalLine? line; // value for bool
+  final String? text; // value for String
+
+  const SignalVariable({
+    required this.name,
+    required this.dartType,
+    this.maths,
+    this.line,
+    this.text,
+  });
+
+  bool get isBool => dartType == 'bool';
+  bool get isText => dartType == 'String';
+
+  /// The Signal-Maths type of this variable's value.
+  String get valueType =>
+      isBool ? 'BOOL' : isText ? 'STRING' : (maths?.type ?? 'NUMBER');
+
+  String renderValue() {
+    if (isBool) return line?.render() ?? '…';
+    if (isText) return '"${text ?? ''}"';
+    return maths?.formula ?? '…';
+  }
+
+  /// The declaration as the user would write it in Dart.
+  String declaration() => '$dartType $name = ${renderValue()};';
+
+  Map<String, dynamic> toJson() => {
+        'name': name,
+        'dartType': dartType,
+        if (maths != null) 'maths': maths!.toJson(),
+        if (line != null) 'line': line!.toJson(),
+        if (text != null) 'text': text,
+      };
+
+  factory SignalVariable.fromJson(Map<String, dynamic> j) => SignalVariable(
+        name: j['name']?.toString() ?? '',
+        dartType: j['dartType']?.toString() ?? 'double',
+        maths: j['maths'] == null
+            ? null
+            : MathsSide.fromJson(
+                Map<String, dynamic>.from(j['maths'] as Map)),
+        line: j['line'] == null
+            ? null
+            : SignalLine.fromJson(
+                Map<String, dynamic>.from(j['line'] as Map)),
+        text: j['text']?.toString(),
+      );
+}
+
+/// Check a new variable name. Returns null when the name is fine,
+/// else the problem in plain words. Names are matched without
+/// case in the Stock IDE (typing is case-insensitive there), so
+/// a name may not collide with a term, a compare word, or another
+/// variable even in a different case.
+String? signalVariableNameError(String name, Iterable<String> takenNames) {
+  if (name.isEmpty) return 'Give the variable a name';
+  if (!RegExp(r'^[A-Za-z_][A-Za-z0-9_]*$').hasMatch(name)) {
+    return 'Use only letters, numbers and _ , starting with a letter — e.g. stockCurrent';
+  }
+  final upper = name.toUpperCase();
+  if (signalTermByCode(upper) != null ||
+      upper == 'PCT_CHANGE' ||
+      upper == 'AND' ||
+      kCompareOps.contains(upper)) {
+    return '"$name" is already a word of the language — pick another name';
+  }
+  for (final t in takenNames) {
+    if (t.toUpperCase() == upper) return 'A variable named "$t" already exists';
+  }
+  return null;
 }
 
 /// A group of maths lines with one job (Gap Check, Time Check…),
@@ -434,6 +549,7 @@ class SignalDef {
   final double? tpPct;
   final double? slPct;
   final bool enabled;
+  final List<SignalVariable> variables;
   final List<SignalIndicator> indicators;
   final int createdMs;
   final int updatedMs;
@@ -451,6 +567,7 @@ class SignalDef {
     this.tpPct,
     this.slPct,
     this.enabled = true,
+    this.variables = const [],
     required this.indicators,
     required this.createdMs,
     required this.updatedMs,
@@ -475,6 +592,7 @@ class SignalDef {
         tpPct: tpPct,
         slPct: slPct,
         enabled: enabled ?? this.enabled,
+        variables: variables,
         indicators: indicators,
         createdMs: createdMs,
         updatedMs: updatedMs,
@@ -494,6 +612,7 @@ class SignalDef {
       'sl_pct': slPct,
       'enabled': enabled ? 1 : 0,
       'body': jsonEncode({
+        'variables': variables.map((v) => v.toJson()).toList(),
         'indicators': indicators.map((i) => i.toJson()).toList(),
       }),
       'created_ms': createdMs,
@@ -505,6 +624,7 @@ class SignalDef {
 
   factory SignalDef.fromMap(Map<String, dynamic> map) {
     var indicators = <SignalIndicator>[];
+    var variables = <SignalVariable>[];
     try {
       final body = jsonDecode(map['body']?.toString() ?? '{}');
       if (body is Map) {
@@ -512,9 +632,14 @@ class SignalDef {
             .map((e) => SignalIndicator.fromJson(
                 Map<String, dynamic>.from(e as Map)))
             .toList();
+        variables = ((body['variables'] as List?) ?? [])
+            .map((e) => SignalVariable.fromJson(
+                Map<String, dynamic>.from(e as Map)))
+            .toList();
       }
     } catch (_) {
       indicators = [];
+      variables = [];
     }
     return SignalDef(
       id: map['id'] as int?,
@@ -529,6 +654,7 @@ class SignalDef {
       tpPct: (map['tp_pct'] as num?)?.toDouble(),
       slPct: (map['sl_pct'] as num?)?.toDouble(),
       enabled: (map['enabled'] as num?)?.toInt() != 0,
+      variables: variables,
       indicators: indicators,
       createdMs: (map['created_ms'] as num?)?.toInt() ?? 0,
       updatedMs: (map['updated_ms'] as num?)?.toInt() ?? 0,

@@ -1,6 +1,6 @@
 # How HJDev Trading Works (simple words)
 
-_Last updated: 24 Nov 2026 — Stock IDE is now the only, full-screen line editor_
+_Last updated: 24 Nov 2026 — Dart-style variables inside signals_
 
 ## 1. App opens
 - The app checks: "Was I logged in TODAY?" If yes, it takes you
@@ -62,6 +62,21 @@ _Last updated: 24 Nov 2026 — Stock IDE is now the only, full-screen line edito
   Weights are equal by default; raise or lower one and the others
   adjust equally, so the total is always 100%. A lock button
   protects an indicator's %.
+- **Variables (Dart-style):** a signal can have named variables —
+  give a name, a type and a value, e.g.
+  `double stockCurrent = PRICE;`. The types mirror Dart:
+  **int** (whole number), **double** (decimal number — Dart's
+  name for what other languages call float), **String** (text),
+  **bool** (TRUE/FALSE). A number variable's value is a
+  calculation (PRICE, PCT_CHANGE(OPEN, PREV_CLOSE)…); a bool
+  variable's value is a whole maths line; a String variable
+  holds fixed text (not usable inside maths). Variable names
+  can be used inside maths lines and inside other variables —
+  a variable may use only the variables listed above it, so
+  values never chase each other in a circle. A bool variable
+  written alone as a line is a complete TRUE/FALSE line.
+  Name and type are fixed after creation; values can be
+  edited. A variable that is in use cannot be deleted.
 - Inside an indicator: **maths lines**. Every line is
   LEFT maths + a compare sign + RIGHT maths, and its answer is
   TRUE or FALSE. Lines are written in the **Stock IDE**, a
