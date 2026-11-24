@@ -1,6 +1,6 @@
 # How HJDev Trading Works (simple words)
 
-_Last updated: 24 Nov 2026 — Dart-style variables inside signals_
+_Last updated: 24 Nov 2026 — Stock IDE syntax colours, like a real code editor_
 
 ## 1. App opens
 - The app checks: "Was I logged in TODAY?" If yes, it takes you
@@ -94,6 +94,14 @@ _Last updated: 24 Nov 2026 — Dart-style variables inside signals_
     in plain words. **Save rule: a line is saved only when its
     answer is TRUE or FALSE** — a complete line with a compare
     sign. Anything else is refused and stays on the page.
+  - Like a real code editor, the IDE paints **syntax colours**
+    as you type: terms in Kite blue, **your own variables in
+    purple** (a different colour, so they stand out), numbers
+    in orange, clock times in green, keywords like PCT_CHANGE
+    in pink, and a word the language does not know in red — so
+    a typo is easy to spot. A colour legend sits under the
+    writing box, and the same colours are used in the line
+    previews everywhere in the builder.
   The two sides must be the same type (price with price, time
   with time…) or one side a plain number — the editor checks
   this while you type and refuses a mixed line.

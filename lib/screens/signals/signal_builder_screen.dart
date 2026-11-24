@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hjdev_trading/db/app_db.dart';
 import 'package:hjdev_trading/models/scrip.dart';
 import 'package:hjdev_trading/models/signal.dart';
+import 'package:hjdev_trading/services/signal_highlighter.dart';
 import 'package:hjdev_trading/services/signal_parser.dart';
 
 /// SIGNAL BUILDER — create and edit a signal in the Signal Maths
@@ -900,11 +901,13 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(
-                    child: Text(ind.lines[j].render(),
-                        style: const TextStyle(
+                    child: Text.rich(signalHighlightSpan(
+                        ind.lines[j].render(),
+                        variables: _variables,
+                        base: const TextStyle(
                             color: _text,
                             fontSize: 13,
-                            fontFamily: 'monospace')),
+                            fontFamily: 'monospace'))),
                   ),
                   IconButton(
                     icon: const Icon(Icons.edit,
@@ -937,6 +940,68 @@ class _SignalBuilderScreenState extends State<SignalBuilderScreen> {
   }
 }
 
+/// The colour of one kind of word in the Stock IDE — like a
+/// real programming editor: terms in Kite blue, the user's own
+/// VARIABLES in purple (a different colour, so they stand out),
+/// numbers orange, clock times green, keywords pink, unknown
+/// words red.
+Color signalKindColor(String kind) {
+  switch (kind) {
+    case 'term':
+      return const Color(0xFF387ED1);
+    case 'variable':
+      return const Color(0xFF7C3AED);
+    case 'number':
+      return const Color(0xFFE65100);
+    case 'time':
+      return const Color(0xFF2E7D32);
+    case 'keyword':
+      return const Color(0xFFC2185B);
+    case 'unknown':
+      return const Color(0xFFE53935);
+    default:
+      return const Color(0xFF424242);
+  }
+}
+
+/// [text] as a coloured TextSpan for previews and line rows.
+TextSpan signalHighlightSpan(String text,
+    {List<SignalVariable> variables = const [], TextStyle? base}) {
+  final b = base ?? const TextStyle(color: Color(0xFF424242));
+  return TextSpan(
+    style: b,
+    children: [
+      for (final seg in signalSegments(text, variables: variables))
+        TextSpan(
+          text: seg.text,
+          style: TextStyle(
+            color: signalKindColor(seg.kind),
+            fontWeight: (seg.kind == 'term' ||
+                    seg.kind == 'variable' ||
+                    seg.kind == 'keyword')
+                ? FontWeight.w600
+                : null,
+          ),
+        ),
+    ],
+  );
+}
+
+/// A text controller that paints the Stock IDE's syntax colours
+/// while the user types.
+class SignalIdeController extends TextEditingController {
+  List<SignalVariable> variables = const [];
+
+  @override
+  TextSpan buildTextSpan({
+    required BuildContext context,
+    TextStyle? style,
+    required bool withComposing,
+  }) {
+    return signalHighlightSpan(text, variables: variables, base: style);
+  }
+}
+
 /// STOCK IDE — the one maths-line editor, now a FULL SCREEN page.
 /// Type the line as text; matching terms are suggested as you
 /// type; the ℹ button opens the all-terms page (tap a term there
@@ -962,13 +1027,14 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
   static const Color _hairline = Color(0xFFE0E0E0);
   static const Color _red = Color(0xFFE53935);
 
-  final TextEditingController _ideCtrl = TextEditingController();
+  final SignalIdeController _ideCtrl = SignalIdeController();
   SignalLine? _ideLine;
   String? _ideError;
 
   @override
   void initState() {
     super.initState();
+    _ideCtrl.variables = widget.variables;
     final e = widget.existing;
     if (e != null) {
       _ideCtrl.text = e.formula;
@@ -1150,6 +1216,19 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
             ),
             onChanged: (_) => setState(_ideRefresh),
           ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 4,
+            children: [
+              _legendDot('term', 'Terms'),
+              _legendDot('variable', 'Your variables'),
+              _legendDot('number', 'Numbers'),
+              _legendDot('time', 'Times'),
+              _legendDot('keyword', 'Keywords'),
+              _legendDot('unknown', 'Unknown word'),
+            ],
+          ),
           if (suggestions.isNotEmpty) ...[
             const SizedBox(height: 12),
             const Text('Suggested terms — tap to add:',
@@ -1243,6 +1322,22 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
     );
   }
 
+  Widget _legendDot(String kind, String label) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 9,
+          height: 9,
+          decoration: BoxDecoration(
+              color: signalKindColor(kind), shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(label, style: const TextStyle(color: _hint, fontSize: 11)),
+      ],
+    );
+  }
+
   Widget _statusBox(String formula, String meaning,
       {bool ok = false, String? error}) {
     return Container(
@@ -1256,9 +1351,10 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(formula,
-              style: const TextStyle(
-                  color: _text, fontSize: 13.5, fontFamily: 'monospace')),
+          Text.rich(signalHighlightSpan(formula,
+              variables: widget.variables,
+              base: const TextStyle(
+                  color: _text, fontSize: 13.5, fontFamily: 'monospace'))),
           const SizedBox(height: 4),
           Text(meaning,
               style: const TextStyle(color: _secondary, fontSize: 12.5)),
@@ -1471,7 +1567,7 @@ class _VariableEditorScreenState extends State<_VariableEditorScreen> {
   static const Color _red = Color(0xFFE53935);
 
   final TextEditingController _nameCtrl = TextEditingController();
-  final TextEditingController _valueCtrl = TextEditingController();
+  final SignalIdeController _valueCtrl = SignalIdeController();
   String _dartType = 'double';
   String? _error;
   MathsSide? _checkSide;
@@ -1485,6 +1581,7 @@ class _VariableEditorScreenState extends State<_VariableEditorScreen> {
   @override
   void initState() {
     super.initState();
+    _valueCtrl.variables = widget.contextVars;
     final e = widget.existing;
     if (e != null) {
       _dartType = e.dartType;
@@ -1828,12 +1925,13 @@ class _VariableEditorScreenState extends State<_VariableEditorScreen> {
                 borderRadius: BorderRadius.circular(4),
                 border: Border.all(color: _blue),
               ),
-              child: Text(
+              child: Text.rich(signalHighlightSpan(
                 '$_dartType ${_nameCtrl.text.trim()} = '
                 '${_checkSide!.formula};',
-                style: const TextStyle(
+                variables: widget.contextVars,
+                base: const TextStyle(
                     color: _text, fontSize: 13, fontFamily: 'monospace'),
-              ),
+              )),
             )
           else if (_checkLine != null)
             Container(
