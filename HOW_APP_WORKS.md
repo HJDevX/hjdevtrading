@@ -107,7 +107,10 @@ _Last updated: 24 Nov 2026 — Stock IDE syntax colours, like a real code editor
     in the variable editor, for the variables a new variable
     may use) — tap one to insert its name, no typing needed.
     They also appear in the as-you-type suggestions and on the
-    ℹ all-terms page.
+    ℹ all-terms page. If the signal has no variables, the IDE
+    says so in a visible box (variables belong to one signal
+    and are created in the builder's Variables section) —
+    the area is never silently empty.
   The two sides must be the same type (price with price, time
   with time…) or one side a plain number — the editor checks
   this while you type and refuses a mixed line.

@@ -1255,6 +1255,24 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
                   ),
               ],
             ),
+          ] else ...[
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: _panel,
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: _hairline),
+              ),
+              child: const Text(
+                'This signal has no variables yet. Variables belong '
+                'to this one signal and are created in the signal '
+                'builder — go back one screen, to the Variables '
+                'section just above Indicators.',
+                style: TextStyle(color: _secondary, fontSize: 12),
+              ),
+            ),
           ],
           if (suggestions.isNotEmpty) ...[
             const SizedBox(height: 12),
