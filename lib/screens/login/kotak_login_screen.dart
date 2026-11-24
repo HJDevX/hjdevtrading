@@ -185,9 +185,9 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
     return InputDecoration(
       labelText: label,
       prefixIcon: Icon(icon, size: 20),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(4)),
       filled: true,
-      fillColor: const Color(0xFF161B22),
+      fillColor: const Color(0xFFF7F7F7),
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
     );
@@ -215,33 +215,33 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
               const Text(
                 'Step A — Profile + TOTP',
                 style: TextStyle(
-                    color: Colors.white,
+                    color: Color(0xFF424242),
                     fontSize: 15,
                     fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
               const Text(
                 'Profile is saved once on this phone. TOTP and MPIN are never saved.',
-                style: TextStyle(color: Colors.white54, fontSize: 12),
+                style: TextStyle(color: Color(0xFF666666), fontSize: 12),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _tokenCtrl,
                 decoration: _dec('Kotak Access Token', Icons.key),
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF424242)),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _mobileCtrl,
                 decoration: _dec('Mobile Number (+91...)', Icons.phone),
                 keyboardType: TextInputType.phone,
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF424242)),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: _uccCtrl,
                 decoration: _dec('UCC (Client Code)', Icons.badge),
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF424242)),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -249,16 +249,16 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
                 decoration: _dec('TOTP (6 digits)', Icons.pin),
                 keyboardType: TextInputType.number,
                 maxLength: 6,
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF424242)),
               ),
               const SizedBox(height: 8),
               ElevatedButton(
                 onPressed: _isVerifyingTotp ? null : _handleVerifyTotp,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2962FF),
+                  backgroundColor: const Color(0xFF387ED1),
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
+                      borderRadius: BorderRadius.circular(4)),
                 ),
                 child: _isVerifyingTotp
                     ? const SizedBox(
@@ -277,7 +277,7 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
                 const Text(
                   'Step B — MPIN',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFF424242),
                       fontSize: 15,
                       fontWeight: FontWeight.bold),
                 ),
@@ -287,16 +287,16 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
                   decoration: _dec('MPIN', Icons.lock),
                   keyboardType: TextInputType.number,
                   obscureText: true,
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Color(0xFF424242)),
                 ),
                 const SizedBox(height: 12),
                 ElevatedButton(
                   onPressed: _isLoggingIn ? null : _handleLogin,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade700,
+                    backgroundColor: const Color(0xFF387ED1),
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10)),
+                        borderRadius: BorderRadius.circular(4)),
                   ),
                   child: _isLoggingIn
                       ? const SizedBox(
@@ -318,7 +318,7 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
                   color: Colors.red.withAlpha(30),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(4),
                   border: Border.all(color: Colors.red.withAlpha(90)),
                 ),
                 child: Text(_error!,
@@ -335,8 +335,8 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: const Color(0xFF161B22),
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: Colors.green.withAlpha(90)),
       ),
       child: Column(
@@ -346,7 +346,7 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
           Text(
             _greetingName != null ? 'Welcome, $_greetingName' : 'Logged in',
             style: const TextStyle(
-                color: Colors.white,
+                color: Color(0xFF424242),
                 fontSize: 17,
                 fontWeight: FontWeight.bold),
           ),
@@ -354,7 +354,7 @@ class _KotakLoginScreenState extends State<KotakLoginScreen> {
           const Text(
             'Session stays active for today. Tomorrow, login again with a fresh TOTP + MPIN.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(color: Color(0xFF666666), fontSize: 12),
           ),
           const SizedBox(height: 16),
           OutlinedButton.icon(

@@ -33,8 +33,8 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
   bool _isSearching = false;
   bool _hasSearched = false;
 
-  static const Color _card = Color(0xFF161B22);
-  static const Color _blue = Color(0xFF2962FF);
+  static const Color _card = Color(0xFFF7F7F7);
+  static const Color _blue = Color(0xFF387ED1);
 
   @override
   void dispose() {
@@ -131,15 +131,15 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
               controller: _searchCtrl,
               autofocus: true,
               onChanged: _onQueryChanged,
-              style: const TextStyle(color: Colors.white),
+              style: const TextStyle(color: Color(0xFF424242)),
               decoration: InputDecoration(
                 hintText: 'Search e.g. RELIANCE, NIFTY, GOLD...',
-                hintStyle: const TextStyle(color: Colors.white38),
-                prefixIcon: const Icon(Icons.search, color: Colors.white38),
+                hintStyle: const TextStyle(color: Color(0xFF9B9B9B)),
+                prefixIcon: const Icon(Icons.search, color: Color(0xFF9B9B9B)),
                 filled: true,
                 fillColor: _card,
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(4),
                   borderSide: BorderSide.none,
                 ),
               ),
@@ -161,7 +161,7 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
                           labelStyle: TextStyle(
                               color: _filter == f
                                   ? Colors.white
-                                  : Colors.white70,
+                                  : Color(0xFF666666),
                               fontSize: 13),
                           side: BorderSide.none,
                         ),
@@ -183,7 +183,7 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
     if (!_hasSearched) {
       return const Center(
         child: Text('Type at least 2 characters to search',
-            style: TextStyle(color: Colors.white38)),
+            style: TextStyle(color: Color(0xFF9B9B9B))),
       );
     }
     final list = _filtered;
@@ -194,7 +194,7 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
           child: Text(
             'No instruments found.\nIf the list is empty, download today\'s stock list from the watchlist screen (cloud icon) first.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white38),
+            style: TextStyle(color: Color(0xFF9B9B9B)),
           ),
         ),
       );
@@ -232,7 +232,7 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
         scrip.instrumentType == 'PE';
     return ListTile(
       title: Text(scrip.symbol,
-          style: const TextStyle(color: Colors.white, fontSize: 14)),
+          style: const TextStyle(color: Color(0xFF424242), fontSize: 14)),
       subtitle: Text(
         isDeriv
             ? '${scrip.displayName} • ${scrip.instrumentType}'
@@ -240,14 +240,14 @@ class _InstrumentSearchScreenState extends State<InstrumentSearchScreen> {
                 '${scrip.strike != null ? ' • Strike ${scrip.strike!.toStringAsFixed(0)}' : ''}'
                 '${scrip.lotSize != null ? ' • Lot ${scrip.lotSize}' : ''}'
             : '${scrip.displayName} • ${scrip.exchange}',
-        style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+        style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
       ),
       trailing: added
           ? const Chip(
               label: Text('Added', style: TextStyle(fontSize: 11)),
-              backgroundColor: Color(0xFF1B3A24),
+              backgroundColor: Color(0xFFE6F4EA),
               labelStyle: TextStyle(color: Color(0xFF00C853)),
               side: BorderSide.none,
             )

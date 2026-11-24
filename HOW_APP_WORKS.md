@@ -1,12 +1,12 @@
 # How HJDev Trading Works (simple words)
 
-_Last updated: 21 Nov 2026 — full rewrite of lib_
+_Last updated: 24 Nov 2026 — Kite-theme reskin + new bottom tabs_
 
 ## 1. App opens
 - The app checks: "Was I logged in TODAY?" If yes, it takes you
   straight to the Watchlist. If no, you log in from the Login tab.
 
-## 2. Login (Login tab)
+## 2. Login (under the More tab)
 1. You saved three things once: Access Token, Mobile Number, UCC.
    They stay saved on the phone.
 2. Every morning you type the 6-digit TOTP from the Kotak Neo app
@@ -32,7 +32,7 @@ _Last updated: 21 Nov 2026 — full rewrite of lib_
   there), so they come from Kotak's live WebSocket feed — that is
   what the green "Live" dot means.
 
-## 5. Paper trading (Practice tab)
+## 5. Paper trading (Orders + Portfolio tabs)
 - On any watchlist row you can tap BUY (Paper) or SELL (Paper).
   The trade fills instantly at the live price and is saved in the
   phone's local database only. Nothing is sent to Kotak.
@@ -40,12 +40,29 @@ _Last updated: 21 Nov 2026 — full rewrite of lib_
 - **Portfolio** page: what you hold now, with live profit/loss and
   an EXIT button.
 
+## 6. The look (24 Nov 2026)
+- The whole app was reskinned to the Zerodha Kite theme: white
+  background, Kite blue (#387ed1), grey text, thin divider lines,
+  small corners, no shadows. Presentation only — nothing about
+  how the app behaves changed.
+- Bottom tabs are now **Watchlist / Orders / Portfolio / Signals /
+  More**. Orders and Portfolio are the same two Practice pages as
+  before, just opened straight from the bottom bar.
+- **Funds** (the virtual fund) is no longer a main tab — it lives
+  under **More**, together with the Replay Simulator and the
+  Kotak Login.
+- The **Signals** tab shows the 4 proven signs (Sign 01–04) as
+  reference cards. It places no trades; the signal engine and
+  Signal Builder come in a later step.
+
 ## File map
 - `main.dart` — app start + theme
-- `screens/home_screen.dart` — bottom tabs (Watchlist/Practice/Login)
-- `screens/login/` — login screen
+- `screens/home_screen.dart` — bottom tabs (Watchlist/Orders/Portfolio/Signals/More)
+- `screens/login/` — login screen (opened from More)
 - `screens/watchlists/` — watchlist + search screens
 - `screens/practice/` — orders + portfolio
+- `screens/signals/` — the 4 proven signs, reference only
+- `screens/more/` — More tab: funds, simulator, login links
 - `services/kotak_api.dart` — login, session, price API
 - `services/scrip_master_service.dart` — daily stock-list download
 - `services/index_feed_service.dart` — live NIFTY/SENSEX feed

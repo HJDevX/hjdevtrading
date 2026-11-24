@@ -81,10 +81,10 @@ class _DraftRow {
 class _SimulatorScreenState extends State<SimulatorScreen> {
   final AppDb _db = AppDb.instance;
 
-  static const Color _bg = Color(0xFF0D1117);
-  static const Color _card = Color(0xFF161B22);
-  static const Color _blue = Color(0xFF2962FF);
-  static const Color _purple = Color(0xFF7C4DFF);
+  static const Color _bg = Color(0xFFFFFFFF);
+  static const Color _card = Color(0xFFF7F7F7);
+  static const Color _blue = Color(0xFF387ED1);
+  static const Color _purple = Color(0xFF387ED1);
   static const Color _green = Color(0xFF00C853);
   static const Color _red = Color(0xFFE53935);
 
@@ -273,7 +273,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                 textStyle: const TextStyle(
                     fontSize: 15, fontWeight: FontWeight.bold),
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10)),
+                    borderRadius: BorderRadius.circular(4)),
               ),
             ),
           ),
@@ -282,7 +282,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             child: Text(
               'Real past market data — no fake prices. Futures/options have no free history; stocks and NIFTY/SENSEX/BANKNIFTY work.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.white38, fontSize: 11.5),
+              style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
             ),
           ),
         ],
@@ -295,7 +295,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       padding: const EdgeInsets.only(bottom: 8),
       child: Text(text,
           style: const TextStyle(
-              color: Colors.white,
+              color: Color(0xFF424242),
               fontSize: 14.5,
               fontWeight: FontWeight.bold)),
     );
@@ -306,21 +306,21 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: _card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Color(0xFFE0E0E0)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text('How much old data do we have?',
               style: TextStyle(
-                  color: Colors.white,
+                  color: Color(0xFF424242),
                   fontSize: 13.5,
                   fontWeight: FontWeight.bold)),
           const SizedBox(height: 4),
           const Text(
             'History comes free from Yahoo Finance (Kotak has no history API). This is how far back each candle size goes:',
-            style: TextStyle(color: Colors.white54, fontSize: 12),
+            style: TextStyle(color: Color(0xFF666666), fontSize: 12),
           ),
           const SizedBox(height: 8),
           ...IntervalSpec.all.map((s) => Padding(
@@ -331,7 +331,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       flex: 2,
                       child: Text('${s.label} candles',
                           style: const TextStyle(
-                              color: Colors.white70, fontSize: 12.5)),
+                              color: Color(0xFF666666), fontSize: 12.5)),
                     ),
                     Expanded(
                       flex: 3,
@@ -359,7 +359,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               color: _blue.withAlpha(35),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(4),
               border: Border.all(color: _blue.withAlpha(90)),
             ),
             child: Row(
@@ -372,11 +372,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                     children: [
                       Text(_picked!.symbol,
                           style: const TextStyle(
-                              color: Colors.white,
+                              color: Color(0xFF424242),
                               fontWeight: FontWeight.bold)),
                       Text(_picked!.displayName,
                           style: const TextStyle(
-                              color: Colors.white54, fontSize: 11.5),
+                              color: Color(0xFF666666), fontSize: 11.5),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis),
                     ],
@@ -388,21 +388,21 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                 else
                   Text(_picked!.yahooSymbol!,
                       style: const TextStyle(
-                          color: Colors.white38, fontSize: 11.5)),
+                          color: Color(0xFF9B9B9B), fontSize: 11.5)),
               ],
             ),
           ),
         TextField(
           controller: _searchCtrl,
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(color: Color(0xFF424242)),
           decoration: InputDecoration(
             hintText: 'Search any stock (from the downloaded list)',
-            hintStyle: const TextStyle(color: Colors.white38),
-            prefixIcon: const Icon(Icons.search, color: Colors.white38),
+            hintStyle: const TextStyle(color: Color(0xFF9B9B9B)),
+            prefixIcon: const Icon(Icons.search, color: Color(0xFF9B9B9B)),
             filled: true,
             fillColor: _card,
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(4),
               borderSide: BorderSide.none,
             ),
           ),
@@ -413,7 +413,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             margin: const EdgeInsets.only(top: 6),
             decoration: BoxDecoration(
               color: _card,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(4),
             ),
             child: Column(
               children: _searchResults
@@ -421,10 +421,10 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                         dense: true,
                         title: Text(s.symbol,
                             style: const TextStyle(
-                                color: Colors.white, fontSize: 13.5)),
+                                color: Color(0xFF424242), fontSize: 13.5)),
                         subtitle: Text(s.displayName,
                             style: const TextStyle(
-                                color: Colors.white38, fontSize: 11),
+                                color: Color(0xFF9B9B9B), fontSize: 11),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis),
                         onTap: () {
@@ -447,7 +447,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
         if (_watchItems.isNotEmpty) ...[
           const SizedBox(height: 10),
           const Text('Or pick from your watchlists:',
-              style: TextStyle(color: Colors.white54, fontSize: 12)),
+              style: TextStyle(color: Color(0xFF666666), fontSize: 12)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -477,14 +477,18 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                 selectedColor: _blue,
                 backgroundColor: _card,
                 labelStyle: TextStyle(
-                    color: hasHistory ? Colors.white : Colors.white24,
+                    color: selected
+                        ? Colors.white
+                        : hasHistory
+                            ? Color(0xFF424242)
+                            : Color(0xFF9B9B9B),
                     fontSize: 12.5),
                 side: BorderSide.none,
               );
             }).toList(),
           ),
           const Text('Greyed-out = futures/options (no free history)',
-              style: TextStyle(color: Colors.white24, fontSize: 11)),
+              style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11)),
         ],
       ],
     );
@@ -510,21 +514,21 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
             decoration: BoxDecoration(
               color: _card,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(4),
             ),
             child: Row(
               children: [
                 const Icon(Icons.calendar_month,
-                    color: Colors.white54, size: 19),
+                    color: Color(0xFF666666), size: 19),
                 const SizedBox(width: 10),
                 Text(
                   '${_date.day}/${_date.month}/${_date.year}',
                   style:
-                      const TextStyle(color: Colors.white, fontSize: 14.5),
+                      const TextStyle(color: Color(0xFF424242), fontSize: 14.5),
                 ),
                 const Spacer(),
                 const Text('tap to change',
-                    style: TextStyle(color: Colors.white38, fontSize: 11.5)),
+                    style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5)),
               ],
             ),
           ),
@@ -546,7 +550,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
               selectedColor: _blue,
               backgroundColor: _card,
               labelStyle: TextStyle(
-                  color: selected ? Colors.white : Colors.white70,
+                  color: selected ? Colors.white : Color(0xFF666666),
                   fontSize: 12.5),
               side: BorderSide.none,
             );
@@ -557,7 +561,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
             padding: EdgeInsets.only(top: 6),
             child: Text(
               'Daily candles: the replay runs 30 trading days starting from the chosen date.',
-              style: TextStyle(color: Colors.white38, fontSize: 11.5),
+              style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
             ),
           ),
       ],
@@ -577,7 +581,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                   onSelected: (_) => setState(() => _speed = x),
                   selectedColor: _blue,
                   backgroundColor: _card,
-                  labelStyle: const TextStyle(fontSize: 12.5),
+                  labelStyle: TextStyle(
+                      fontSize: 12.5,
+                      color: _speed == x
+                          ? Colors.white
+                          : Color(0xFF424242)),
                   side: BorderSide.none,
                 )),
             ChoiceChip(
@@ -586,7 +594,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
               onSelected: (_) {},
               selectedColor: _blue,
               backgroundColor: _card,
-              labelStyle: const TextStyle(fontSize: 12.5),
+              labelStyle: TextStyle(
+                      fontSize: 12.5,
+                      color: !_speedChips.contains(_speed)
+                          ? Colors.white
+                          : Color(0xFF424242)),
               side: BorderSide.none,
             ),
           ],
@@ -604,7 +616,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
           _spec.id == '1d'
               ? 'At ${_speed.toInt()}x, one day-candle takes about ${(23400 / _speed).round()} seconds'
               : 'At ${_speed.toInt()}x, a full trading day takes about ${(375 * 60 / _speed / 60).toStringAsFixed(1)} minutes',
-          style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+          style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
         ),
       ],
     );
@@ -622,7 +634,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                   const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
                 color: _card,
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(4),
               ),
               child: Row(
                 children: [
@@ -637,11 +649,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                   Expanded(
                     child: Text(e.value.describe(_date),
                         style: const TextStyle(
-                            color: Colors.white, fontSize: 13)),
+                            color: Color(0xFF424242), fontSize: 13)),
                   ),
                   IconButton(
                     icon: const Icon(Icons.delete_outline,
-                        color: Colors.white38, size: 19),
+                        color: Color(0xFF9B9B9B), size: 19),
                     onPressed: () =>
                         setState(() => _drafts.removeAt(e.key)),
                   ),
@@ -660,7 +672,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
         const SizedBox(height: 4),
         const Text(
           'Three kinds: at market (fills at the start price), at a time (fills when the clock reaches it, at any price), at a price (fills when the price reaches your price). A BUY can also carry a target — a price or a % gain — and the simulator sells automatically when the price hits it.',
-          style: TextStyle(color: Colors.white38, fontSize: 11.5),
+          style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
         ),
       ],
     );
@@ -676,9 +688,9 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) => AlertDialog(
-          backgroundColor: _card,
+          backgroundColor: Colors.white,
           title: const Text('Order at start',
-              style: TextStyle(color: Colors.white, fontSize: 16)),
+              style: TextStyle(color: Color(0xFF424242), fontSize: 16)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -690,6 +702,10 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       selected: draft.side == 'B',
                       onSelected: (_) => setDlg(() => draft.side = 'B'),
                       selectedColor: _green,
+                      labelStyle: TextStyle(
+                          color: draft.side == 'B'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                     ),
                   ),
@@ -700,6 +716,10 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       selected: draft.side == 'S',
                       onSelected: (_) => setDlg(() => draft.side = 'S'),
                       selectedColor: _red,
+                      labelStyle: TextStyle(
+                          color: draft.side == 'S'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                     ),
                   ),
@@ -712,15 +732,15 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                     child: TextField(
                       controller: qtyCtrl,
                       keyboardType: TextInputType.number,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Color(0xFF424242)),
                       decoration: const InputDecoration(
                           labelText: 'Quantity (size)',
-                          labelStyle: TextStyle(color: Colors.white54)),
+                          labelStyle: TextStyle(color: Color(0xFF666666))),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline,
-                        color: Colors.white54),
+                        color: Color(0xFF666666)),
                     onPressed: () {
                       final q = int.tryParse(qtyCtrl.text.trim()) ?? 1;
                       if (q > 1) {
@@ -731,7 +751,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.add_circle_outline,
-                        color: Colors.white54),
+                        color: Color(0xFF666666)),
                     onPressed: () {
                       final q = int.tryParse(qtyCtrl.text.trim()) ?? 0;
                       qtyCtrl.text = (q + 1).toString();
@@ -746,7 +766,7 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                 children: [1, 10, 25, 50, 100].map((n) {
                   return ActionChip(
                     label: Text('$n', style: const TextStyle(fontSize: 11.5)),
-                    backgroundColor: Colors.white10,
+                    backgroundColor: Color(0xFFF7F7F7),
                     side: BorderSide.none,
                     visualDensity: VisualDensity.compact,
                     onPressed: () {
@@ -759,9 +779,9 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
               const SizedBox(height: 10),
               DropdownButton<String>(
                 value: draft.triggerType,
-                dropdownColor: _card,
+                dropdownColor: Colors.white,
                 isExpanded: true,
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF424242)),
                 items: [
                   const DropdownMenuItem(
                       value: 'MARKET', child: Text('At market (start)')),
@@ -781,9 +801,9 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                     draft.triggerTime == null
                         ? 'Pick a time'
                         : 'At ${draft.triggerTime!.hour.toString().padLeft(2, '0')}:${draft.triggerTime!.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: Color(0xFF424242)),
                   ),
-                  trailing: const Icon(Icons.schedule, color: Colors.white54),
+                  trailing: const Icon(Icons.schedule, color: Color(0xFF666666)),
                   onTap: () async {
                     final t = await showTimePicker(
                       context: ctx,
@@ -798,17 +818,17 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                   controller: priceCtrl,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Color(0xFF424242)),
                   decoration: const InputDecoration(
                       labelText: 'Trigger price ₹',
-                      labelStyle: TextStyle(color: Colors.white54)),
+                      labelStyle: TextStyle(color: Color(0xFF666666))),
                 ),
               if (draft.side == 'B') ...[
                 const SizedBox(height: 12),
                 const Align(
                   alignment: Alignment.centerLeft,
                   child: Text('Target — auto-sell when the price hits it',
-                      style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+                      style: TextStyle(color: Color(0xFF666666), fontSize: 12.5)),
                 ),
                 const SizedBox(height: 6),
                 Row(
@@ -819,6 +839,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       selected: targetMode == 'NONE',
                       onSelected: (_) => setDlg(() => targetMode = 'NONE'),
                       selectedColor: _blue,
+                      labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: targetMode == 'NONE'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -829,6 +854,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       selected: targetMode == 'PRICE',
                       onSelected: (_) => setDlg(() => targetMode = 'PRICE'),
                       selectedColor: _blue,
+                      labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: targetMode == 'PRICE'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -839,6 +869,11 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                       selected: targetMode == 'PCT',
                       onSelected: (_) => setDlg(() => targetMode = 'PCT'),
                       selectedColor: _blue,
+                      labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: targetMode == 'PCT'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -849,13 +884,13 @@ class _SimulatorScreenState extends State<SimulatorScreen> {
                     controller: targetCtrl,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: Color(0xFF424242)),
                     decoration: InputDecoration(
                         labelText: targetMode == 'PRICE'
                             ? 'Target price ₹'
                             : 'Target % above buy price',
                         labelStyle:
-                            const TextStyle(color: Colors.white54)),
+                            const TextStyle(color: Color(0xFF666666))),
                   ),
               ],
             ],

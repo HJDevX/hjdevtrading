@@ -27,18 +27,31 @@ import 'package:hjdev_trading/services/pending_order_engine.dart';
 /// The flask icon in the app bar opens the SIMULATOR — replay a real
 /// past trading day with historical prices, for practice any time.
 class PracticeScreen extends StatefulWidget {
-  const PracticeScreen({super.key});
+  /// Optional external tab controller. The app shell passes one so
+  /// its bottom bar can open this screen on Orders or Portfolio;
+  /// without it the screen runs its own controller, exactly as
+  /// before.
+  final TabController? controller;
+
+  const PracticeScreen({super.key, this.controller});
 
   @override
   State<PracticeScreen> createState() => _PracticeScreenState();
 }
 
-class _PracticeScreenState extends State<PracticeScreen> {
+class _PracticeScreenState extends State<PracticeScreen>
+    with SingleTickerProviderStateMixin {
   PaperFundInfo? _fund;
+  TabController? _ownTabs;
+
+  TabController get _tabs => widget.controller ?? _ownTabs!;
 
   @override
   void initState() {
     super.initState();
+    if (widget.controller == null) {
+      _ownTabs = TabController(length: 2, vsync: this);
+    }
     _loadFund();
     // Instant refresh: any paper trade or fund edit reloads the
     // app-bar fund line the moment it happens.
@@ -48,6 +61,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
   @override
   void dispose() {
     PaperBroker.revisionNotifier.removeListener(_loadFund);
+    _ownTabs?.dispose();
     super.dispose();
   }
 
@@ -65,9 +79,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
     final value = await showDialog<double>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF161B22),
+        backgroundColor: Colors.white,
         title: const Text('Edit virtual fund',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
+            style: TextStyle(color: Color(0xFF424242), fontSize: 16)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -77,12 +91,12 @@ class _PracticeScreenState extends State<PracticeScreen> {
               autofocus: true,
               keyboardType:
                   const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(color: Colors.white),
+              style: const TextStyle(color: Color(0xFF424242)),
               decoration: const InputDecoration(
                 labelText: 'Starting fund (₹)',
-                labelStyle: TextStyle(color: Colors.white54),
+                labelStyle: TextStyle(color: Color(0xFF666666)),
                 prefixText: '₹ ',
-                prefixStyle: TextStyle(color: Colors.white70),
+                prefixStyle: TextStyle(color: Color(0xFF666666)),
               ),
             ),
             const SizedBox(height: 10),
@@ -90,7 +104,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
               'Available = fund + booked P&L − margin blocked in open '
               'positions. If the new fund is smaller than the blocked '
               'margin, new buys stop until you sell something.',
-              style: TextStyle(color: Colors.white38, fontSize: 11.5),
+              style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
             ),
           ],
         ),
@@ -124,9 +138,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -142,9 +154,9 @@ class _PracticeScreenState extends State<PracticeScreen> {
                     label: Text('PAPER',
                         style: TextStyle(
                             fontSize: 11,
-                            color: Colors.orange,
+                            color: Color(0xFFEF6C00),
                             fontWeight: FontWeight.bold)),
-                    backgroundColor: Color(0xFF3A2A12),
+                    backgroundColor: Color(0xFFFFF3E0),
                     side: BorderSide.none,
                     visualDensity: VisualDensity.compact,
                   ),
@@ -156,7 +168,7 @@ class _PracticeScreenState extends State<PracticeScreen> {
                     : 'Virtual fund: ${_fmtMoney(_fund!.available)} available'
                         ' • ${_fmtMoney(_fund!.marginBlocked)} blocked',
                 style: const TextStyle(
-                    color: Colors.white54,
+                    color: Color(0xFF666666),
                     fontSize: 11,
                     fontWeight: FontWeight.normal),
                 maxLines: 1,
@@ -181,23 +193,24 @@ class _PracticeScreenState extends State<PracticeScreen> {
               },
             ),
           ],
-          bottom: const TabBar(
-            indicatorColor: Color(0xFF2962FF),
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white54,
-            tabs: [
+          bottom: TabBar(
+            controller: _tabs,
+            indicatorColor: Color(0xFF387ED1),
+            labelColor: Color(0xFF424242),
+            unselectedLabelColor: Color(0xFF666666),
+            tabs: const [
               Tab(text: 'Orders'),
               Tab(text: 'Portfolio'),
             ],
           ),
         ),
-        body: const TabBarView(
-          children: [
+        body: TabBarView(
+          controller: _tabs,
+          children: const [
             _OrdersTab(),
             _PortfolioTab(),
           ],
         ),
-      ),
     );
   }
 }
@@ -335,9 +348,9 @@ class _OrdersTabState extends State<_OrdersTab>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) => AlertDialog(
-          backgroundColor: const Color(0xFF161B22),
+          backgroundColor: Colors.white,
           title: Text('Modify ${o.symbol}',
-              style: const TextStyle(color: Colors.white, fontSize: 16)),
+              style: const TextStyle(color: Color(0xFF424242), fontSize: 16)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -351,26 +364,26 @@ class _OrdersTabState extends State<_OrdersTab>
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Trigger time',
                         style:
-                            TextStyle(color: Colors.white54, fontSize: 13)),
+                            TextStyle(color: Color(0xFF666666), fontSize: 13)),
                     subtitle: Text(
                         triggerTime != null
                             ? _fmtTime(triggerTime!)
                             : 'Not set',
-                        style: const TextStyle(color: Colors.white)),
+                        style: const TextStyle(color: Color(0xFF424242))),
                     trailing: const Icon(Icons.access_time,
-                        color: Colors.white54),
+                        color: Color(0xFF666666)),
                     onTap: () async {
                       final v = await _pickTimeMs(triggerTime);
                       setDlg(() => triggerTime = v);
                     },
                   ),
                 if (!o.isExit) ...[
-                  const Divider(color: Colors.white10),
+                  const Divider(color: Color(0xFFE0E0E0)),
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text('Target (exit after fill)',
                         style:
-                            TextStyle(color: Colors.white54, fontSize: 12)),
+                            TextStyle(color: Color(0xFF666666), fontSize: 12)),
                   ),
                   _dlgField(tPriceCtrl, 'Target price (₹)',
                       const TextInputType.numberWithOptions(decimal: true)),
@@ -380,14 +393,14 @@ class _OrdersTabState extends State<_OrdersTab>
                     contentPadding: EdgeInsets.zero,
                     title: const Text('or Target time',
                         style:
-                            TextStyle(color: Colors.white54, fontSize: 13)),
+                            TextStyle(color: Color(0xFF666666), fontSize: 13)),
                     subtitle: Text(
                         targetTime != null
                             ? _fmtTime(targetTime!)
                             : 'Not set',
-                        style: const TextStyle(color: Colors.white)),
+                        style: const TextStyle(color: Color(0xFF424242))),
                     trailing: const Icon(Icons.access_time,
-                        color: Colors.white54),
+                        color: Color(0xFF666666)),
                     onTap: () async {
                       final v = await _pickTimeMs(targetTime);
                       setDlg(() => targetTime = v);
@@ -411,7 +424,7 @@ class _OrdersTabState extends State<_OrdersTab>
                     alignment: Alignment.centerLeft,
                     child: Text('Stop-loss',
                         style:
-                            TextStyle(color: Colors.white54, fontSize: 12)),
+                            TextStyle(color: Color(0xFF666666), fontSize: 12)),
                   ),
                   _dlgField(slPriceCtrl, 'Stop-loss price (₹)',
                       const TextInputType.numberWithOptions(decimal: true)),
@@ -525,10 +538,10 @@ class _OrdersTabState extends State<_OrdersTab>
       child: TextField(
         controller: ctrl,
         keyboardType: type,
-        style: const TextStyle(color: Colors.white),
+        style: const TextStyle(color: Color(0xFF424242)),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white54, fontSize: 13),
+          labelStyle: const TextStyle(color: Color(0xFF666666), fontSize: 13),
         ),
       ),
     );
@@ -565,14 +578,14 @@ class _OrdersTabState extends State<_OrdersTab>
                 fontWeight: FontWeight.bold)),
       ),
       title: Text(o.symbol,
-          style: const TextStyle(color: Colors.white, fontSize: 14)),
+          style: const TextStyle(color: Color(0xFF424242), fontSize: 14)),
       subtitle: Text(
         failed
             ? (o.note ?? 'Could not execute')
             : '${o.qty} qty • ${_triggerText(o)}'
                 '${_targetText(o).isNotEmpty ? '\n${_targetText(o)}' : ''}',
         style: TextStyle(
-            color: failed ? const Color(0xFFE53935) : Colors.white38,
+            color: failed ? const Color(0xFFE53935) : Color(0xFF9B9B9B),
             fontSize: 11.5),
       ),
       trailing: failed
@@ -583,7 +596,7 @@ class _OrdersTabState extends State<_OrdersTab>
                 IconButton(
                   tooltip: 'Modify',
                   icon: const Icon(Icons.edit_outlined,
-                      color: Colors.white70, size: 20),
+                      color: Color(0xFF666666), size: 20),
                   onPressed: () => _modifyPending(o),
                 ),
                 IconButton(
@@ -608,7 +621,7 @@ class _OrdersTabState extends State<_OrdersTab>
           child: Text(
             'No pending orders.\nPlace one from any watchlist stock: Execute → At price or At time — or set a target / stop-loss on a buy.\nExecuted trades live in the Portfolio tab.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white38, fontSize: 14),
+            style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 14),
           ),
         ),
       );
@@ -619,7 +632,7 @@ class _OrdersTabState extends State<_OrdersTab>
       child: ListView.separated(
         itemCount: itemCount,
         separatorBuilder: (_, __) =>
-            const Divider(color: Colors.white10, height: 1, indent: 16),
+            const Divider(color: Color(0xFFE0E0E0), height: 1, indent: 16),
         itemBuilder: (ctx, i) {
           if (i == 0) {
             return const Padding(
@@ -792,10 +805,10 @@ class _PortfolioTabState extends State<_PortfolioTab>
       child: TextField(
         controller: c,
         keyboardType: type,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: const TextStyle(color: Color(0xFF424242), fontSize: 14),
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white54, fontSize: 12),
+          labelStyle: const TextStyle(color: Color(0xFF666666), fontSize: 12),
           isDense: true,
         ),
       ),
@@ -838,9 +851,9 @@ class _PortfolioTabState extends State<_PortfolioTab>
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) => AlertDialog(
-          backgroundColor: const Color(0xFF1A1D23),
+          backgroundColor: const Color(0xFFFFFFFF),
           title: Text('Target / Stop-loss\n${p.symbol}',
-              style: const TextStyle(color: Colors.white, fontSize: 16)),
+              style: const TextStyle(color: Color(0xFF424242), fontSize: 16)),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -849,11 +862,11 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 Text(
                   'Holding ${p.qty} @ avg ₹${p.avgPrice.toStringAsFixed(2)} • Current ₹${cur.toStringAsFixed(2)}',
                   style: const TextStyle(
-                      color: Colors.white54, fontSize: 12),
+                      color: Color(0xFF666666), fontSize: 12),
                 ),
                 const SizedBox(height: 10),
                 const Text('Target',
-                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    style: TextStyle(color: Color(0xFF666666), fontSize: 12)),
                 _dlgField(tPriceCtrl, 'Target price (₹)',
                     const TextInputType.numberWithOptions(decimal: true)),
                 _dlgField(tPctCtrl, 'or Target % gain',
@@ -863,7 +876,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                   dense: true,
                   title: const Text('or Exit today at',
                       style:
-                          TextStyle(color: Colors.white54, fontSize: 12)),
+                          TextStyle(color: Color(0xFF666666), fontSize: 12)),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -872,11 +885,11 @@ class _PortfolioTabState extends State<_PortfolioTab>
                             ? _fmtTime(targetTimeMs!)
                             : 'Not set',
                         style: const TextStyle(
-                            color: Colors.white, fontSize: 13),
+                            color: Color(0xFF424242), fontSize: 13),
                       ),
                       IconButton(
                         icon: const Icon(Icons.schedule,
-                            color: Colors.white54, size: 19),
+                            color: Color(0xFF666666), size: 19),
                         onPressed: () async {
                           final picked = await showTimePicker(
                             context: ctx,
@@ -898,7 +911,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                       if (targetTimeMs != null)
                         IconButton(
                           icon: const Icon(Icons.clear,
-                              color: Colors.white38, size: 18),
+                              color: Color(0xFF9B9B9B), size: 18),
                           onPressed: () =>
                               setDlg(() => targetTimeMs = null),
                         ),
@@ -906,7 +919,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                   ),
                 ),
                 const Text('Stop-loss',
-                    style: TextStyle(color: Colors.white54, fontSize: 12)),
+                    style: TextStyle(color: Color(0xFF666666), fontSize: 12)),
                 _dlgField(slPriceCtrl, 'Stop-loss price (₹)',
                     const TextInputType.numberWithOptions(decimal: true)),
                 _dlgField(slPctCtrl, 'or Stop-loss % loss',
@@ -917,7 +930,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                   'stop-loss BELOW it. Use price OR % for each — '
                   'leave everything empty to remove both exits.',
                   style: const TextStyle(
-                      color: Colors.white38, fontSize: 11),
+                      color: Color(0xFF9B9B9B), fontSize: 11),
                 ),
               ],
             ),
@@ -1046,7 +1059,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
           child: Text(
             'No paper holdings yet.\nBuy something (paper) from your watchlist and it will appear here, with its P&L and trade history.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white38, fontSize: 14),
+            style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 14),
           ),
         ),
       );
@@ -1070,16 +1083,16 @@ class _PortfolioTabState extends State<_PortfolioTab>
       child: ListView.separated(
         itemCount: itemCount,
         separatorBuilder: (_, __) =>
-            const Divider(color: Colors.white10, height: 1, indent: 16),
+            const Divider(color: Color(0xFFE0E0E0), height: 1, indent: 16),
         itemBuilder: (ctx, i) {
           if (i == 0) {
             return Container(
               margin: const EdgeInsets.all(16),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFF161B22),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white10),
+                color: const Color(0xFFF7F7F7),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: Color(0xFFE0E0E0)),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1101,7 +1114,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                     ],
                   ),
                   if (_fund != null) ...[
-                    const Divider(color: Colors.white10, height: 20),
+                    const Divider(color: Color(0xFFE0E0E0), height: 20),
                     _fundRow('Virtual fund (start)',
                         _fmtMoney(_fund!.startingFund)),
                     _fundRow('Margin blocked',
@@ -1120,7 +1133,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                       padding: EdgeInsets.only(top: 4),
                       child: Text(
                         'Equity buys block only 1/5th (5x MTF leverage); F&O blocks full value.',
-                        style: TextStyle(color: Colors.white38, fontSize: 11),
+                        style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11),
                       ),
                     ),
                   ],
@@ -1136,7 +1149,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 padding: EdgeInsets.fromLTRB(16, 14, 16, 4),
                 child: Text('EXECUTED TRADES',
                     style: TextStyle(
-                        color: Colors.white38,
+                        color: Color(0xFF9B9B9B),
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 0.6)),
@@ -1153,13 +1166,13 @@ class _PortfolioTabState extends State<_PortfolioTab>
           return ListTile(
             title: Text(p.symbol,
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: Color(0xFF424242),
                     fontSize: 14.5,
                     fontWeight: FontWeight.w600)),
             subtitle: Text(
               '${p.qty} qty • Avg ₹${p.avgPrice.toStringAsFixed(2)}'
               '${ltp != null ? ' • LTP ₹${ltp.toStringAsFixed(2)}' : ''}',
-              style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+              style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
             ),
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
@@ -1167,7 +1180,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 IconButton(
                   tooltip: 'Edit target / stop-loss for this holding',
                   icon: const Icon(Icons.gps_fixed,
-                      color: Colors.white54, size: 20),
+                      color: Color(0xFF666666), size: 20),
                   onPressed: () => _editExits(p),
                 ),
                 Flexible(
@@ -1177,7 +1190,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                       pPnl != null ? _fmtMoney(pPnl) : '—',
                       style: TextStyle(
                         color: pPnl == null
-                            ? Colors.white38
+                            ? Color(0xFF9B9B9B)
                             : pPnl >= 0
                                 ? const Color(0xFF00C853)
                                 : const Color(0xFFE53935),
@@ -1212,7 +1225,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(label,
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
+            style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11),
             overflow: TextOverflow.ellipsis),
         const SizedBox(height: 3),
         // Money amounts vary in length — shrink to fit the column
@@ -1222,7 +1235,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
           alignment: Alignment.centerLeft,
           child: Text(value,
               style: TextStyle(
-                  color: color ?? Colors.white,
+                  color: color ?? Color(0xFF424242),
                   fontSize: 14,
                   fontWeight: FontWeight.bold)),
         ),
@@ -1240,7 +1253,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
           Flexible(
             child: Text(label,
                 style:
-                    const TextStyle(color: Colors.white54, fontSize: 12.5),
+                    const TextStyle(color: Color(0xFF666666), fontSize: 12.5),
                 overflow: TextOverflow.ellipsis),
           ),
           const SizedBox(width: 12),
@@ -1249,7 +1262,7 @@ class _PortfolioTabState extends State<_PortfolioTab>
                 textAlign: TextAlign.right,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    color: color ?? Colors.white,
+                    color: color ?? Color(0xFF424242),
                     fontSize: 12.5,
                     fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
           ),
@@ -1281,14 +1294,14 @@ class _PortfolioTabState extends State<_PortfolioTab>
                   fontWeight: FontWeight.bold)),
         ),
         title: Text(o.symbol,
-            style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+            style: const TextStyle(color: Color(0xFF424242), fontSize: 13.5)),
         subtitle: Text(
           '${o.qty} @ ₹${o.price.toStringAsFixed(2)} • ${_fmtTime(o.timeMs)}'
           '${!buy && o.realizedPnl != 0 ? ' • P&L ${_fmtMoney(o.realizedPnl)}' : ''}',
-          style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+          style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
         ),
         trailing: Text(_fmtMoney(o.value),
-            style: const TextStyle(color: Colors.white54, fontSize: 12.5)),
+            style: const TextStyle(color: Color(0xFF666666), fontSize: 12.5)),
       ),
     );
   }

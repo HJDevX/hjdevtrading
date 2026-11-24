@@ -29,9 +29,9 @@ class ReplayScreen extends StatefulWidget {
   State<ReplayScreen> createState() => _ReplayScreenState();
 }
 
-const Color _kBg = Color(0xFF0D1117);
-const Color _kCard = Color(0xFF161B22);
-const Color _kBlue = Color(0xFF2962FF);
+const Color _kBg = Color(0xFFFFFFFF);
+const Color _kCard = Color(0xFFF7F7F7);
+const Color _kBlue = Color(0xFF387ED1);
 const Color _kPurple = Color(0xFF7C4DFF);
 const Color _kGreen = Color(0xFF00C853);
 const Color _kRed = Color(0xFFE53935);
@@ -176,9 +176,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDlg) => AlertDialog(
-          backgroundColor: _kCard,
+          backgroundColor: Colors.white,
           title: Text(title,
-              style: const TextStyle(color: Colors.white, fontSize: 16)),
+              style: const TextStyle(color: Color(0xFF424242), fontSize: 16)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -192,6 +192,10 @@ class _ReplayScreenState extends State<ReplayScreen> {
                           ? (_) => setDlg(() => side = 'B')
                           : null,
                       selectedColor: _kGreen,
+                      labelStyle: TextStyle(
+                          color: side == 'B'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                     ),
                   ),
@@ -204,6 +208,10 @@ class _ReplayScreenState extends State<ReplayScreen> {
                           ? (_) => setDlg(() => side = 'S')
                           : null,
                       selectedColor: _kRed,
+                      labelStyle: TextStyle(
+                          color: side == 'S'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                     ),
                   ),
@@ -216,15 +224,15 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     child: TextField(
                       controller: qtyCtrl,
                       keyboardType: TextInputType.number,
-                      style: const TextStyle(color: Colors.white),
+                      style: const TextStyle(color: Color(0xFF424242)),
                       decoration: const InputDecoration(
                           labelText: 'Quantity (size)',
-                          labelStyle: TextStyle(color: Colors.white54)),
+                          labelStyle: TextStyle(color: Color(0xFF666666))),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline,
-                        color: Colors.white54),
+                        color: Color(0xFF666666)),
                     onPressed: () {
                       final q = int.tryParse(qtyCtrl.text.trim()) ?? 1;
                       if (q > 1) {
@@ -235,7 +243,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   ),
                   IconButton(
                     icon: const Icon(Icons.add_circle_outline,
-                        color: Colors.white54),
+                        color: Color(0xFF666666)),
                     onPressed: () {
                       final q = int.tryParse(qtyCtrl.text.trim()) ?? 0;
                       qtyCtrl.text = (q + 1).toString();
@@ -250,7 +258,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 children: [1, 10, 25, 50, 100].map((n) {
                   return ActionChip(
                     label: Text('$n', style: const TextStyle(fontSize: 11.5)),
-                    backgroundColor: Colors.white10,
+                    backgroundColor: Color(0xFFF7F7F7),
                     side: BorderSide.none,
                     visualDensity: VisualDensity.compact,
                     onPressed: () {
@@ -263,9 +271,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
               const SizedBox(height: 10),
               DropdownButton<String>(
                 value: type,
-                dropdownColor: _kCard,
+                dropdownColor: Colors.white,
                 isExpanded: true,
-                style: const TextStyle(color: Colors.white),
+                style: const TextStyle(color: Color(0xFF424242)),
                 items: [
                   const DropdownMenuItem(
                       value: 'MARKET', child: Text('At market (now)')),
@@ -289,10 +297,10 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     time == null
                         ? 'Pick a time'
                         : 'At ${time!.hour.toString().padLeft(2, '0')}:${time!.minute.toString().padLeft(2, '0')}',
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: Color(0xFF424242)),
                   ),
                   trailing:
-                      const Icon(Icons.schedule, color: Colors.white54),
+                      const Icon(Icons.schedule, color: Color(0xFF666666)),
                   onTap: () async {
                     final t = await showTimePicker(
                       context: ctx,
@@ -306,19 +314,19 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   controller: priceCtrl,
                   keyboardType:
                       const TextInputType.numberWithOptions(decimal: true),
-                  style: const TextStyle(color: Colors.white),
+                  style: const TextStyle(color: Color(0xFF424242)),
                   decoration: InputDecoration(
                       labelText: type == 'TARGET'
                           ? 'Target price ₹'
                           : 'Trigger price ₹',
-                      labelStyle: const TextStyle(color: Colors.white54)),
+                      labelStyle: const TextStyle(color: Color(0xFF666666))),
                 ),
               if (side == 'B' && !isTargetOrder) ...[
                 const SizedBox(height: 12),
                 const Align(
                   alignment: Alignment.centerLeft,
                   child: Text('Target — auto-sell when the price hits it',
-                      style: TextStyle(color: Colors.white54, fontSize: 12.5)),
+                      style: TextStyle(color: Color(0xFF666666), fontSize: 12.5)),
                 ),
                 const SizedBox(height: 6),
                 Row(
@@ -329,6 +337,11 @@ class _ReplayScreenState extends State<ReplayScreen> {
                       selected: targetMode == 'NONE',
                       onSelected: (_) => setDlg(() => targetMode = 'NONE'),
                       selectedColor: _kBlue,
+                      labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: targetMode == 'NONE'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -339,6 +352,11 @@ class _ReplayScreenState extends State<ReplayScreen> {
                       selected: targetMode == 'PRICE',
                       onSelected: (_) => setDlg(() => targetMode = 'PRICE'),
                       selectedColor: _kBlue,
+                      labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: targetMode == 'PRICE'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -349,6 +367,11 @@ class _ReplayScreenState extends State<ReplayScreen> {
                       selected: targetMode == 'PCT',
                       onSelected: (_) => setDlg(() => targetMode = 'PCT'),
                       selectedColor: _kBlue,
+                      labelStyle: TextStyle(
+                          fontSize: 11.5,
+                          color: targetMode == 'PCT'
+                              ? Colors.white
+                              : Color(0xFF424242)),
                       side: BorderSide.none,
                       visualDensity: VisualDensity.compact,
                     ),
@@ -359,13 +382,13 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     controller: targetCtrl,
                     keyboardType:
                         const TextInputType.numberWithOptions(decimal: true),
-                    style: const TextStyle(color: Colors.white),
+                    style: const TextStyle(color: Color(0xFF424242)),
                     decoration: InputDecoration(
                         labelText: targetMode == 'PRICE'
                             ? 'Target price ₹'
                             : 'Target % above buy price',
                         labelStyle:
-                            const TextStyle(color: Colors.white54)),
+                            const TextStyle(color: Color(0xFF666666))),
                   ),
               ],
             ],
@@ -488,9 +511,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 label: const Text('SIMULATOR',
                     style: TextStyle(
                         fontSize: 11,
-                        color: _kPurple,
+                        color: _kBlue,
                         fontWeight: FontWeight.bold)),
-                backgroundColor: _kPurple.withAlpha(40),
+                backgroundColor: _kBlue.withAlpha(40),
                 side: BorderSide.none,
                 visualDensity: VisualDensity.compact,
               ),
@@ -504,9 +527,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
             _controls(isDaily),
             if (_broker.positionQty > 0) _pnlStrip(price),
             const TabBar(
-              indicatorColor: _kPurple,
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white54,
+              indicatorColor: _kBlue,
+              labelColor: Color(0xFF424242),
+              unselectedLabelColor: Color(0xFF666666),
               tabs: [
                 Tab(text: 'Orders'),
                 Tab(text: 'Portfolio'),
@@ -542,7 +565,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                     ? _fmtDate(simTime)
                     : '${_fmtDate(simTime)} • ${_fmtClock(simTime)}',
                 style: const TextStyle(
-                    color: Colors.white70,
+                    color: Color(0xFF666666),
                     fontSize: 13,
                     fontWeight: FontWeight.w600),
                 overflow: TextOverflow.ellipsis,
@@ -552,7 +575,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 isDaily
                     ? 'Day ${_engine.candleIndex + 1} of ${widget.candles.length} • ${widget.spec.label} candles'
                     : 'Candle ${_engine.candleIndex + 1} of ${widget.candles.length} • ${widget.spec.label}',
-                style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+                style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
                 overflow: TextOverflow.ellipsis,
               ),
               if (_engine.isFinished)
@@ -560,7 +583,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   padding: EdgeInsets.only(top: 2),
                   child: Text('SIMULATION ENDED',
                       style: TextStyle(
-                          color: _kPurple,
+                          color: _kBlue,
                           fontSize: 11.5,
                           fontWeight: FontWeight.bold)),
                 ),
@@ -577,7 +600,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 children: [
                   Text('₹${price.toStringAsFixed(2)}',
                       style: const TextStyle(
-                          color: Colors.white,
+                          color: Color(0xFF424242),
                           fontSize: 21,
                           fontWeight: FontWeight.bold)),
                   Text(
@@ -617,7 +640,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
           child: Row(
             children: [
               const Text('Chart',
-                  style: TextStyle(color: Colors.white54, fontSize: 12)),
+                  style: TextStyle(color: Color(0xFF666666), fontSize: 12)),
               const Spacer(),
               ChoiceChip(
                 label: const Text('Candles', style: TextStyle(fontSize: 11.5)),
@@ -646,9 +669,9 @@ class _ReplayScreenState extends State<ReplayScreen> {
           height: _chartHeight,
           margin: const EdgeInsets.fromLTRB(12, 4, 12, 0),
           decoration: BoxDecoration(
-            color: _kCard,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white10),
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Color(0xFFE0E0E0)),
           ),
           child: CustomPaint(
             size: Size.infinite,
@@ -676,7 +699,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
               width: 44,
               height: 4,
               decoration: BoxDecoration(
-                color: Colors.white24,
+                color: Color(0xFFDADADA),
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
@@ -703,7 +726,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   _engine.isPlaying
                       ? Icons.pause_circle_filled
                       : Icons.play_circle_filled,
-                  color: _engine.isFinished ? Colors.white24 : _kPurple,
+                  color: _engine.isFinished ? Color(0xFFDADADA) : _kBlue,
                 ),
                 onPressed: _engine.isFinished
                     ? null
@@ -718,18 +741,18 @@ class _ReplayScreenState extends State<ReplayScreen> {
               ),
               IconButton(
                 tooltip: 'Restart simulation',
-                icon: const Icon(Icons.restart_alt, color: Colors.white70),
+                icon: const Icon(Icons.restart_alt, color: Color(0xFF666666)),
                 onPressed: () async {
                   final ok = await showDialog<bool>(
                     context: context,
                     builder: (ctx) => AlertDialog(
-                      backgroundColor: _kCard,
+                      backgroundColor: Colors.white,
                       title: const Text('Restart simulation?',
                           style:
-                              TextStyle(color: Colors.white, fontSize: 16)),
+                              TextStyle(color: Color(0xFF424242), fontSize: 16)),
                       content: const Text(
                         'The clock goes back to the start, all session trades and orders are cleared, and your start orders are placed again.',
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                        style: TextStyle(color: Color(0xFF666666), fontSize: 13),
                       ),
                       actions: [
                         TextButton(
@@ -759,7 +782,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
               ),
               Text('${_engine.speed.toInt()}x',
                   style: const TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFF424242),
                       fontSize: 13,
                       fontWeight: FontWeight.bold)),
             ],
@@ -767,20 +790,20 @@ class _ReplayScreenState extends State<ReplayScreen> {
           Row(
             children: [
               Text(isDaily ? _fmtDate(start) : _fmtClock(start),
-                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11)),
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: LinearProgressIndicator(
                     value: _engine.progress,
-                    backgroundColor: Colors.white10,
-                    color: _kPurple,
+                    backgroundColor: Color(0xFFE0E0E0),
+                    color: _kBlue,
                     minHeight: 4,
                   ),
                 ),
               ),
               Text(isDaily ? _fmtDate(end) : _fmtClock(end),
-                  style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                  style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11)),
             ],
           ),
         ],
@@ -801,18 +824,18 @@ class _ReplayScreenState extends State<ReplayScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
       decoration: BoxDecoration(
         color: color.withAlpha(26),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(4),
         border: Border.all(color: color.withAlpha(70)),
       ),
       child: Row(
         children: [
           const Icon(Icons.account_balance_wallet_outlined,
-              color: Colors.white54, size: 16),
+              color: Color(0xFF666666), size: 16),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               'Holding ${_broker.positionQty} @ ₹${_broker.positionAvg.toStringAsFixed(2)}',
-              style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+              style: const TextStyle(color: Color(0xFF666666), fontSize: 12.5),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -846,7 +869,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
             children: [
               const Text('Orders',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFF424242),
                       fontSize: 14,
                       fontWeight: FontWeight.bold)),
               const Spacer(),
@@ -869,7 +892,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   child: Text(
                     'No orders yet.\nPlace one — market, at a time, or at a price.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white38, fontSize: 13.5),
+                    style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 13.5),
                   ),
                 )
               : ListView(
@@ -894,7 +917,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
       padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
       child: Text(text,
           style: const TextStyle(
-              color: Colors.white38,
+              color: Color(0xFF9B9B9B),
               fontSize: 11.5,
               fontWeight: FontWeight.bold)),
     );
@@ -944,15 +967,15 @@ class _ReplayScreenState extends State<ReplayScreen> {
     return ListTile(
       leading: _sideChip(o),
       title: Text('${o.qty} qty • ${_orderTriggerDetail(o)}',
-          style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+          style: const TextStyle(color: Color(0xFF424242), fontSize: 13.5)),
       subtitle: Text(subtitle,
-          style: const TextStyle(color: Colors.white38, fontSize: 11.5)),
+          style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5)),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
             tooltip: 'Modify',
-            icon: const Icon(Icons.edit, color: Colors.white54, size: 19),
+            icon: const Icon(Icons.edit, color: Color(0xFF666666), size: 19),
             onPressed: () => _modifyOrder(o),
           ),
           IconButton(
@@ -973,7 +996,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
         ? _kGreen
         : o.status == 'FAILED'
             ? _kRed
-            : Colors.white38;
+            : Color(0xFF9B9B9B);
     var detail = o.status;
     if (o.status == 'EXECUTED' && o.fillPrice != null) {
       final dt = o.fillTimeMs != null
@@ -990,7 +1013,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
     return ListTile(
       leading: _sideChip(o),
       title: Text('${o.qty} qty • ${o.triggerText}',
-          style: const TextStyle(color: Colors.white70, fontSize: 13.5)),
+          style: const TextStyle(color: Color(0xFF666666), fontSize: 13.5)),
       subtitle: Text('Order #${o.id} • $detail',
           style: TextStyle(color: statusColor, fontSize: 11.5)),
     );
@@ -1014,14 +1037,14 @@ class _ReplayScreenState extends State<ReplayScreen> {
           padding: const EdgeInsets.all(18),
           decoration: BoxDecoration(
             color: totalColor.withAlpha(24),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(4),
             border: Border.all(color: totalColor.withAlpha(80)),
           ),
           child: Column(
             children: [
               const Text('TOTAL P&L',
                   style: TextStyle(
-                      color: Colors.white54,
+                      color: Color(0xFF666666),
                       fontSize: 11.5,
                       fontWeight: FontWeight.bold,
                       letterSpacing: 1.2)),
@@ -1037,7 +1060,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 Text(
                   '${total >= 0 ? '+' : ''}${totalPct.toStringAsFixed(2)}% on invested ${_fmtMoney(invested)}',
                   style:
-                      const TextStyle(color: Colors.white54, fontSize: 12),
+                      const TextStyle(color: Color(0xFF666666), fontSize: 12),
                 ),
               const SizedBox(height: 12),
               Row(
@@ -1045,7 +1068,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   Expanded(
                     child: _pnlMini('Booked (realized)', realized),
                   ),
-                  Container(width: 1, height: 34, color: Colors.white10),
+                  Container(width: 1, height: 34, color: Color(0xFFE0E0E0)),
                   Expanded(
                     child: _pnlMini('Open (unrealized)', unreal),
                   ),
@@ -1060,8 +1083,8 @@ class _ReplayScreenState extends State<ReplayScreen> {
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: _kCard,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white10),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Color(0xFFE0E0E0)),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1071,7 +1094,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                   Flexible(
                     child: Text(widget.title,
                         style: const TextStyle(
-                            color: Colors.white,
+                            color: Color(0xFF424242),
                             fontSize: 15,
                             fontWeight: FontWeight.bold),
                         overflow: TextOverflow.ellipsis),
@@ -1108,7 +1131,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
               ] else
                 const Text(
                     'No open position right now.\nBooked P&L above is final for this session unless you trade again.',
-                    style: TextStyle(color: Colors.white54, fontSize: 13)),
+                    style: TextStyle(color: Color(0xFF666666), fontSize: 13)),
             ],
           ),
         ),
@@ -1141,7 +1164,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
         const SizedBox(height: 10),
         const Text(
           'This portfolio exists only inside this simulation. Leaving the screen ends the session.',
-          style: TextStyle(color: Colors.white38, fontSize: 11.5),
+          style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
         ),
       ],
     );
@@ -1152,7 +1175,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
     return Column(
       children: [
         Text(label,
-            style: const TextStyle(color: Colors.white38, fontSize: 11),
+            style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11),
             overflow: TextOverflow.ellipsis),
         const SizedBox(height: 2),
         FittedBox(
@@ -1174,7 +1197,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
           Flexible(
             child: Text(label,
                 style:
-                    const TextStyle(color: Colors.white54, fontSize: 13),
+                    const TextStyle(color: Color(0xFF666666), fontSize: 13),
                 overflow: TextOverflow.ellipsis),
           ),
           const SizedBox(width: 12),
@@ -1183,7 +1206,7 @@ class _ReplayScreenState extends State<ReplayScreen> {
                 textAlign: TextAlign.right,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    color: color ?? Colors.white,
+                    color: color ?? Color(0xFF424242),
                     fontSize: 13,
                     fontWeight: bold ? FontWeight.bold : FontWeight.w600)),
           ),
@@ -1237,9 +1260,9 @@ class _ChartPainter extends CustomPainter {
 
     // Grid + price labels
     final gridPaint = Paint()
-      ..color = Colors.white.withAlpha(18)
+      ..color = Colors.black.withAlpha(18)
       ..strokeWidth = 1;
-    final labelStyle = TextStyle(color: Colors.white.withAlpha(120), fontSize: 9);
+    final labelStyle = TextStyle(color: Colors.black.withAlpha(120), fontSize: 9);
     for (var i = 0; i <= 4; i++) {
       final p = minP + (maxP - minP) * i / 4;
       final yy = y(p);

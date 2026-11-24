@@ -67,9 +67,9 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   final List<Quote> _pendingTicks = [];
   Timer? _tickFlushTimer;
 
-  static const Color _bg = Color(0xFF0D1117);
-  static const Color _card = Color(0xFF161B22);
-  static const Color _blue = Color(0xFF2962FF);
+  static const Color _bg = Color(0xFFFFFFFF);
+  static const Color _card = Color(0xFFF7F7F7);
+  static const Color _blue = Color(0xFF387ED1);
   static const Color _green = Color(0xFF00C853);
   static const Color _red = Color(0xFFE53935);
 
@@ -263,9 +263,9 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
       builder: (ctx) {
         _progressCtx = ctx;
         return AlertDialog(
-          backgroundColor: _card,
+          backgroundColor: Colors.white,
           title: const Text('Updating instruments',
-              style: TextStyle(color: Colors.white, fontSize: 16)),
+              style: TextStyle(color: Color(0xFF424242), fontSize: 16)),
           content: ValueListenableBuilder<String>(
             valueListenable: progress,
             builder: (context, value, child) => Row(
@@ -278,7 +278,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                 const SizedBox(width: 14),
                 Expanded(
                   child: Text(value,
-                      style: const TextStyle(color: Colors.white70)),
+                      style: const TextStyle(color: Color(0xFF666666))),
                 ),
               ],
             ),
@@ -342,13 +342,13 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
     return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: _card,
+        backgroundColor: Colors.white,
         title: Text(title,
-            style: const TextStyle(color: Colors.white, fontSize: 16)),
+            style: const TextStyle(color: Color(0xFF424242), fontSize: 16)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(color: Color(0xFF424242)),
           decoration: const InputDecoration(hintText: 'List name'),
         ),
         actions: [
@@ -367,9 +367,9 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   void _showManageLists() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: _card,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(4))),
       builder: (ctx) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -378,13 +378,13 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
               padding: EdgeInsets.all(16),
               child: Text('My Watchlists',
                   style: TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFF424242),
                       fontSize: 16,
                       fontWeight: FontWeight.bold)),
             ),
             ..._watchlists.map((list) => ListTile(
                   title: Text(list.name,
-                      style: const TextStyle(color: Colors.white)),
+                      style: const TextStyle(color: Color(0xFF424242))),
                   leading: Icon(
                     list.id == _activeList?.id
                         ? Icons.radio_button_checked
@@ -397,7 +397,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                     children: [
                       IconButton(
                         icon: const Icon(Icons.edit,
-                            color: Colors.white54, size: 19),
+                            color: Color(0xFF666666), size: 19),
                         onPressed: () async {
                           Navigator.pop(ctx);
                           final name =
@@ -435,7 +435,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
             ListTile(
               leading: const Icon(Icons.add_circle, color: _blue),
               title: const Text('New Watchlist',
-                  style: TextStyle(color: Colors.white)),
+                  style: TextStyle(color: Color(0xFF424242))),
               onTap: () async {
                 Navigator.pop(ctx);
                 final name = await _nameDialog('New watchlist', '');
@@ -463,10 +463,10 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
   void _showItemSheet(WatchItem item) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: _card,
+      backgroundColor: Colors.white,
       isScrollControlled: true,
       shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(4))),
       builder: (ctx) => _ItemSheet(
         item: item,
         // Always the freshest quote the watchlist itself has — the
@@ -499,12 +499,12 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label,
-              style: const TextStyle(color: Colors.white54, fontSize: 13)),
+              style: const TextStyle(color: Color(0xFF666666), fontSize: 13)),
           Text(
             isVolume
                 ? value.toInt().toString()
                 : '₹${value.toStringAsFixed(2)}',
-            style: const TextStyle(color: Colors.white, fontSize: 13),
+            style: const TextStyle(color: Color(0xFF424242), fontSize: 13),
           ),
         ],
       ),
@@ -562,10 +562,10 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                   alignment: Alignment.centerLeft,
                   child: Text(_scripInfoText!,
                       style: const TextStyle(
-                          color: Colors.white38, fontSize: 11)),
+                          color: Color(0xFF9B9B9B), fontSize: 11)),
                 ),
               ),
-            const Divider(color: Colors.white10, height: 12),
+            const Divider(color: Color(0xFFE0E0E0), height: 12),
             Expanded(child: _buildList()),
           ],
         ),
@@ -584,7 +584,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
               const Flexible(
                 child: Text('HJDev Trading',
                     style: TextStyle(
-                        color: Colors.white,
+                        color: Color(0xFF424242),
                         fontSize: 19,
                         fontWeight: FontWeight.bold),
                     overflow: TextOverflow.ellipsis),
@@ -595,27 +595,27 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                 height: 9,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _feedConnected ? _green : Colors.white24,
+                  color: _feedConnected ? _green : Color(0xFFCCCCCC),
                 ),
               ),
               const SizedBox(width: 4),
               Flexible(
                 child: Text(_feedConnected ? 'Live' : 'Index feed off',
                     style:
-                        const TextStyle(color: Colors.white38, fontSize: 11),
+                        const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11),
                     overflow: TextOverflow.ellipsis),
               ),
               const Spacer(),
               IconButton(
                 tooltip: 'Download today\'s stock list (scrip master)',
                 icon: const Icon(Icons.cloud_download_outlined,
-                    color: Colors.white70, size: 22),
+                    color: Color(0xFF666666), size: 22),
                 onPressed: _refreshScripsManual,
               ),
               IconButton(
                 tooltip: 'Logout',
                 icon: const Icon(Icons.logout,
-                    color: Colors.white54, size: 21),
+                    color: Color(0xFF666666), size: 21),
                 onPressed: () => widget.onLogout(),
               ),
             ],
@@ -641,14 +641,14 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
         color: _card,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.white10),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: Color(0xFFE0E0E0)),
       ),
       child: Row(
         children: [
           Text(name,
               style: const TextStyle(
-                  color: Colors.white70,
+                  color: Color(0xFF666666),
                   fontSize: 12,
                   fontWeight: FontWeight.w600)),
           const SizedBox(width: 6),
@@ -661,7 +661,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                 children: [
                   Text(ltp != null ? ltp.toStringAsFixed(2) : '—',
                       style: const TextStyle(
-                          color: Colors.white,
+                          color: Color(0xFF424242),
                           fontSize: 13,
                           fontWeight: FontWeight.bold)),
                   const SizedBox(width: 6),
@@ -703,7 +703,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                       selectedColor: _blue,
                       backgroundColor: _card,
                       labelStyle: TextStyle(
-                          color: active ? Colors.white : Colors.white70,
+                          color: active ? Colors.white : Color(0xFF666666),
                           fontSize: 13),
                       side: BorderSide.none,
                     ),
@@ -720,7 +720,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
           ),
           IconButton(
             icon: Icon(_isEditMode ? Icons.check : Icons.edit_outlined,
-                color: Colors.white54, size: 19),
+                color: Color(0xFF666666), size: 19),
             onPressed: () => setState(() => _isEditMode = !_isEditMode),
           ),
         ],
@@ -749,16 +749,16 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
             color: _card,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.white10),
+            borderRadius: BorderRadius.circular(4),
+            border: Border.all(color: Color(0xFFE0E0E0)),
           ),
           child: const Row(
             children: [
-              Icon(Icons.search, color: Colors.white38, size: 19),
+              Icon(Icons.search, color: Color(0xFF9B9B9B), size: 19),
               SizedBox(width: 10),
               Expanded(
                 child: Text('Search stocks, futures, options...',
-                    style: TextStyle(color: Colors.white38, fontSize: 13),
+                    style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 13),
                     overflow: TextOverflow.ellipsis),
               ),
             ],
@@ -779,7 +779,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
           child: Text(
             'This watchlist is empty.\nTap the search bar to add stocks, futures or options from the downloaded list.',
             textAlign: TextAlign.center,
-            style: TextStyle(color: Colors.white38, fontSize: 14),
+            style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 14),
           ),
         ),
       );
@@ -789,7 +789,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
       child: ListView.separated(
         itemCount: _items.length,
         separatorBuilder: (context, index) =>
-            const Divider(color: Colors.white10, height: 1, indent: 16),
+            const Divider(color: Color(0xFFE0E0E0), height: 1, indent: 16),
         itemBuilder: (ctx, i) {
           final item = _items[i];
           final quote = item.id != null ? _quotes[item.id!] : null;
@@ -809,7 +809,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
           Flexible(
             child: Text(item.symbol,
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: Color(0xFF424242),
                     fontSize: 14.5,
                     fontWeight: FontWeight.w600),
                 overflow: TextOverflow.ellipsis),
@@ -834,7 +834,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
                 item.instrumentType == 'PE'
             ? '${item.expiry ?? ''}${item.strike != null ? ' • Strike ${item.strike!.toStringAsFixed(0)}' : ''}'
             : item.displayName,
-        style: const TextStyle(color: Colors.white38, fontSize: 11.5),
+        style: const TextStyle(color: Color(0xFF9B9B9B), fontSize: 11.5),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -848,7 +848,7 @@ class _WatchlistsScreenState extends State<WatchlistsScreen> {
               Text(
                 quote != null ? quote.ltp.toStringAsFixed(2) : '—',
                 style: const TextStyle(
-                    color: Colors.white,
+                    color: Color(0xFF424242),
                     fontSize: 14.5,
                     fontWeight: FontWeight.w600),
               ),
@@ -909,7 +909,8 @@ class _ItemSheet extends StatefulWidget {
 class _ItemSheetState extends State<_ItemSheet> {
   static const Color _green = Color(0xFF00C853);
   static const Color _red = Color(0xFFE53935);
-  static const Color _card = Color(0xFF161B22);
+  static const Color _card = Colors.white;
+  static const Color _blue = Color(0xFF387ED1);
 
   late final int _step;
   late int _qty;
@@ -974,17 +975,17 @@ class _ItemSheetState extends State<_ItemSheet> {
       builder: (ctx) => AlertDialog(
         backgroundColor: _card,
         title: const Text('Type quantity',
-            style: TextStyle(color: Colors.white, fontSize: 16)),
+            style: TextStyle(color: Color(0xFF424242), fontSize: 16)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           keyboardType: TextInputType.number,
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(color: Color(0xFF424242)),
           decoration: InputDecoration(
             labelText: _isDeriv
                 ? 'Quantity (lots of $_step)'
                 : 'Quantity',
-            labelStyle: const TextStyle(color: Colors.white54),
+            labelStyle: const TextStyle(color: Color(0xFF666666)),
           ),
         ),
         actions: [
@@ -1142,15 +1143,15 @@ class _ItemSheetState extends State<_ItemSheet> {
       builder: (ctx) => AlertDialog(
         backgroundColor: _card,
         title: Text(title,
-            style: const TextStyle(color: Colors.white, fontSize: 16)),
+            style: const TextStyle(color: Color(0xFF424242), fontSize: 16)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           keyboardType:
               const TextInputType.numberWithOptions(decimal: true),
-          style: const TextStyle(color: Colors.white),
+          style: const TextStyle(color: Color(0xFF424242)),
           decoration: const InputDecoration(
-            labelStyle: TextStyle(color: Colors.white54),
+            labelStyle: TextStyle(color: Color(0xFF666666)),
           ),
         ),
         actions: [
@@ -1285,10 +1286,10 @@ class _ItemSheetState extends State<_ItemSheet> {
       label: Text(label, style: const TextStyle(fontSize: 12)),
       selected: selected,
       onSelected: (_) => onTap(),
-      selectedColor: const Color(0xFF2962FF),
-      backgroundColor: Colors.white10,
+      selectedColor: const Color(0xFF387ED1),
+      backgroundColor: Color(0xFFF7F7F7),
       labelStyle:
-          TextStyle(color: selected ? Colors.white : Colors.white60),
+          TextStyle(color: selected ? Colors.white : Color(0xFF666666)),
       side: BorderSide.none,
       visualDensity: VisualDensity.compact,
     );
@@ -1305,7 +1306,7 @@ class _ItemSheetState extends State<_ItemSheet> {
             Flexible(
               child: Text(label,
                   style:
-                      const TextStyle(color: Colors.white54, fontSize: 13),
+                      const TextStyle(color: Color(0xFF666666), fontSize: 13),
                   overflow: TextOverflow.ellipsis),
             ),
             const SizedBox(width: 12),
@@ -1317,12 +1318,12 @@ class _ItemSheetState extends State<_ItemSheet> {
                     child: Text(value,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                            color: Colors.white,
+                            color: Color(0xFF424242),
                             fontSize: 13,
                             fontWeight: FontWeight.w600)),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(Icons.edit, color: Colors.white38, size: 14),
+                  const Icon(Icons.edit, color: Color(0xFF9B9B9B), size: 14),
                 ],
               ),
             ),
@@ -1341,7 +1342,7 @@ class _ItemSheetState extends State<_ItemSheet> {
           Flexible(
             child: Text(label,
                 style:
-                    const TextStyle(color: Colors.white54, fontSize: 13),
+                    const TextStyle(color: Color(0xFF666666), fontSize: 13),
                 overflow: TextOverflow.ellipsis),
           ),
           const SizedBox(width: 12),
@@ -1350,7 +1351,7 @@ class _ItemSheetState extends State<_ItemSheet> {
                 textAlign: TextAlign.right,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                    color: color ?? Colors.white,
+                    color: color ?? Color(0xFF424242),
                     fontSize: 13,
                     fontWeight: FontWeight.w600)),
           ),
@@ -1390,12 +1391,12 @@ class _ItemSheetState extends State<_ItemSheet> {
                   children: [
                     Text(item.symbol,
                         style: const TextStyle(
-                            color: Colors.white,
+                            color: Color(0xFF424242),
                             fontSize: 18,
                             fontWeight: FontWeight.bold)),
                     Text(item.displayName,
                         style: const TextStyle(
-                            color: Colors.white54, fontSize: 12),
+                            color: Color(0xFF666666), fontSize: 12),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis),
                   ],
@@ -1432,7 +1433,7 @@ class _ItemSheetState extends State<_ItemSheet> {
                           alignment: Alignment.centerLeft,
                           child: Text('₹${quote.ltp.toStringAsFixed(2)}',
                               style: const TextStyle(
-                                  color: Colors.white,
+                                  color: Color(0xFF424242),
                                   fontSize: 24,
                                   fontWeight: FontWeight.bold)),
                         ),
@@ -1479,13 +1480,13 @@ class _ItemSheetState extends State<_ItemSheet> {
             _row('Volume', quote.volume.toString()),
           ] else
             const Text('Live price not loaded yet',
-                style: TextStyle(color: Colors.white54)),
+                style: TextStyle(color: Color(0xFF666666))),
           const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
-              color: Colors.white.withAlpha(10),
-              borderRadius: BorderRadius.circular(8),
+              color: Color(0xFFF7F7F7),
+              borderRadius: BorderRadius.circular(4),
             ),
             child: Column(
               children: [
@@ -1520,12 +1521,12 @@ class _ItemSheetState extends State<_ItemSheet> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text('Quantity',
-                  style: TextStyle(color: Colors.white70, fontSize: 14)),
+                  style: TextStyle(color: Color(0xFF666666), fontSize: 14)),
               Row(
                 children: [
                   IconButton(
                     icon: const Icon(Icons.remove_circle_outline,
-                        color: Colors.white70),
+                        color: Color(0xFF666666)),
                     onPressed: () {
                       if (_qty > _step) setState(() => _qty -= _step);
                     },
@@ -1536,19 +1537,19 @@ class _ItemSheetState extends State<_ItemSheet> {
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 4),
                       decoration: BoxDecoration(
-                        border: Border.all(color: Colors.white24),
-                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Color(0xFFE0E0E0)),
+                        borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text('$_qty',
                           style: const TextStyle(
-                              color: Colors.white,
+                              color: Color(0xFF424242),
                               fontSize: 16,
                               fontWeight: FontWeight.bold)),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.add_circle_outline,
-                        color: Colors.white70),
+                        color: Color(0xFF666666)),
                     onPressed: () => setState(() => _qty += _step),
                   ),
                 ],
@@ -1557,11 +1558,11 @@ class _ItemSheetState extends State<_ItemSheet> {
           ),
           const Center(
             child: Text('Tap the quantity number to type it directly',
-                style: TextStyle(color: Colors.white24, fontSize: 10.5)),
+                style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 10.5)),
           ),
           const SizedBox(height: 14),
           const Text('Execute',
-              style: TextStyle(color: Colors.white70, fontSize: 14)),
+              style: TextStyle(color: Color(0xFF666666), fontSize: 14)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -1607,7 +1608,7 @@ class _ItemSheetState extends State<_ItemSheet> {
             ),
           const SizedBox(height: 12),
           const Text('Target — exit after BUY fills',
-              style: TextStyle(color: Colors.white70, fontSize: 14)),
+              style: TextStyle(color: Color(0xFF666666), fontSize: 14)),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
@@ -1669,7 +1670,7 @@ class _ItemSheetState extends State<_ItemSheet> {
             ),
           const SizedBox(height: 8),
           const Text('Stop-loss (optional, for BUY)',
-              style: TextStyle(color: Colors.white70, fontSize: 14)),
+              style: TextStyle(color: Color(0xFF666666), fontSize: 14)),
           _tapRow(
             'Stop-loss price',
             _slPrice != null
@@ -1707,7 +1708,7 @@ class _ItemSheetState extends State<_ItemSheet> {
             'cancels the other. Target must be ABOVE the current '
             'price, stop-loss BELOW it — and for each one, use the '
             'price OR the %, never both.',
-            style: TextStyle(color: Colors.white38, fontSize: 11),
+            style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11),
           ),
           const SizedBox(height: 10),
           Row(
@@ -1716,15 +1717,15 @@ class _ItemSheetState extends State<_ItemSheet> {
                 child: ElevatedButton(
                   onPressed: _trading ? null : () => _submit('B'),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _green,
+                    backgroundColor: _blue,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                        borderRadius: BorderRadius.circular(4)),
                   ),
                   child: Text(
                       _orderType == 'NOW' ? 'BUY (Paper)' : 'Place BUY order',
                       style: const TextStyle(
-                          color: Colors.white,
+                          color: Color(0xFF424242),
                           fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -1736,14 +1737,14 @@ class _ItemSheetState extends State<_ItemSheet> {
                     backgroundColor: _red,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                     shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8)),
+                        borderRadius: BorderRadius.circular(4)),
                   ),
                   child: Text(
                       _orderType == 'NOW'
                           ? 'SELL (Paper)'
                           : 'Place SELL order',
                       style: const TextStyle(
-                          color: Colors.white,
+                          color: Color(0xFF424242),
                           fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -1752,7 +1753,7 @@ class _ItemSheetState extends State<_ItemSheet> {
           const SizedBox(height: 6),
             const Center(
               child: Text('Paper trade only — no real order goes to Kotak',
-                  style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  style: TextStyle(color: Color(0xFF9B9B9B), fontSize: 11)),
             ),
           ],
         ),
