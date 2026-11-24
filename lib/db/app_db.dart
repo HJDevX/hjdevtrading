@@ -2,6 +2,7 @@ import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:hjdev_trading/models/paper.dart';
 import 'package:hjdev_trading/models/scrip.dart';
+import 'package:hjdev_trading/models/signal.dart';
 import 'package:hjdev_trading/models/watchlist.dart';
 
 /// The app's local on-phone database (SQLite).
@@ -35,7 +36,7 @@ class AppDb {
 
     return await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: _createDB,
       onUpgrade: _upgradeDB,
     );
@@ -48,6 +49,7 @@ class AppDb {
     await _createSimTables(db);
     await _createPaperAccountTable(db);
     await _createPendingOrdersTable(db);
+    await _createSignalsTable(db);
   }
 
   Future<void> _upgradeDB(Database db, int oldVersion, int newVersion) async {
@@ -104,6 +106,60 @@ class AppDb {
         }
       }
     }
+    if (oldVersion < 9) {
+      await _createSignalsTable(db);
+    }
+  }
+
+  // ---------------- Signals (Signal Maths builder) ----------------
+  // Signals the user creates in the Signal Builder, stored as DATA:
+  // the summary columns below plus a JSON body holding the
+  // indicators and maths lines. EMPTY by default — nothing is
+  // pre-loaded; the user creates his own.
+
+  Future<void> _createSignalsTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        exchange TEXT NOT NULL DEFAULT 'nse_cm',
+        token TEXT,
+        display_name TEXT,
+        instrument_type TEXT,
+        side TEXT NOT NULL DEFAULT 'B',
+        qty INTEGER NOT NULL DEFAULT 1,
+        tp_pct REAL,
+        sl_pct REAL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        body TEXT NOT NULL DEFAULT '{}',
+        created_ms INTEGER NOT NULL DEFAULT 0,
+        updated_ms INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+  }
+
+  Future<int> insertSignal(SignalDef s) async {
+    final db = await instance.database;
+    return await db.insert('signals', s.toMap());
+  }
+
+  Future<void> updateSignal(SignalDef s) async {
+    final db = await instance.database;
+    await db.update('signals', s.toMap(),
+        where: 'id = ?', whereArgs: [s.id]);
+  }
+
+  Future<void> deleteSignal(int id) async {
+    final db = await instance.database;
+    await db.delete('signals', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<SignalDef>> getSignals() async {
+    final db = await instance.database;
+    final result =
+        await db.query('signals', orderBy: 'updated_ms DESC, id DESC');
+    return result.map((json) => SignalDef.fromMap(json)).toList();
   }
 
   Future<void> _createCoreTables(Database db) async {

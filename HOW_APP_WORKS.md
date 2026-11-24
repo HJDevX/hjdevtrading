@@ -1,6 +1,6 @@
 # How HJDev Trading Works (simple words)
 
-_Last updated: 24 Nov 2026 — Kite-theme reskin + new bottom tabs_
+_Last updated: 24 Nov 2026 — Signal Builder: create + save your own signals_
 
 ## 1. App opens
 - The app checks: "Was I logged in TODAY?" If yes, it takes you
@@ -51,9 +51,31 @@ _Last updated: 24 Nov 2026 — Kite-theme reskin + new bottom tabs_
 - **Funds** (the virtual fund) is no longer a main tab — it lives
   under **More**, together with the Replay Simulator and the
   Kotak Login.
-- The **Signals** tab shows the 4 proven signs (Sign 01–04) as
-  reference cards. It places no trades; the signal engine and
-  Signal Builder come in a later step.
+- The **Signals** tab holds YOUR OWN signals, made in the Signal
+  Builder (see §7). It is empty until you create one — the old
+  Sign 01–04 reference cards are gone from this tab.
+
+## 7. Signals — your own maths language (24 Nov 2026)
+- A signal = one stock + one action (BUY or SELL, quantity,
+  optional target % and stop-loss %).
+- Inside a signal: **indicators**. Each indicator has a weight %.
+  Weights are equal by default; raise or lower one and the others
+  adjust equally, so the total is always 100%. A lock button
+  protects an indicator's %.
+- Inside an indicator: **maths lines**. Every line is
+  LEFT maths + a compare sign + RIGHT maths, built by tapping —
+  add a Term (PRICE, OPEN, PREV_CLOSE, TIME_NOW, VOLUME…),
+  a Number, a clock Time, or a % Change, joined by + − × ÷.
+  The two sides must be the same type (price with price, time
+  with time…) or one side a plain number — the builder checks
+  this while you build and refuses a mixed line.
+- Signals are saved as data in the phone's local database
+  (DB v9, `signals` table) — never as app code. You can edit,
+  delete and switch each signal on/off from the Signals tab.
+- **Not live yet:** no engine watches the signals in this step,
+  so creating or saving a signal places no trades. The live
+  engine (calculate every line on the live price, fire at
+  100%) is the next step.
 
 ## File map
 - `main.dart` — app start + theme
@@ -61,11 +83,11 @@ _Last updated: 24 Nov 2026 — Kite-theme reskin + new bottom tabs_
 - `screens/login/` — login screen (opened from More)
 - `screens/watchlists/` — watchlist + search screens
 - `screens/practice/` — orders + portfolio
-- `screens/signals/` — the 4 proven signs, reference only
+- `screens/signals/` — your saved signals + the Signal Builder
 - `screens/more/` — More tab: funds, simulator, login links
 - `services/kotak_api.dart` — login, session, price API
 - `services/scrip_master_service.dart` — daily stock-list download
 - `services/index_feed_service.dart` — live NIFTY/SENSEX feed
 - `services/paper_broker.dart` — paper buy/sell + holdings maths
-- `db/app_db.dart` — local database (watchlists, stocks, paper trades)
+- `db/app_db.dart` — local database (watchlists, stocks, paper trades, signals)
 - `models/` — plain data classes
