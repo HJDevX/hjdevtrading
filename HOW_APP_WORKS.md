@@ -1,6 +1,6 @@
 # How HJDev Trading Works (simple words)
 
-_Last updated: 24 Nov 2026 — Signal Builder: create + save your own signals_
+_Last updated: 24 Nov 2026 — Signal Builder + Stock IDE text editor_
 
 ## 1. App opens
 - The app checks: "Was I logged in TODAY?" If yes, it takes you
@@ -63,9 +63,20 @@ _Last updated: 24 Nov 2026 — Signal Builder: create + save your own signals_
   adjust equally, so the total is always 100%. A lock button
   protects an indicator's %.
 - Inside an indicator: **maths lines**. Every line is
-  LEFT maths + a compare sign + RIGHT maths, built by tapping —
-  add a Term (PRICE, OPEN, PREV_CLOSE, TIME_NOW, VOLUME…),
-  a Number, a clock Time, or a % Change, joined by + − × ÷.
+  LEFT maths + a compare sign + RIGHT maths, and its answer is
+  TRUE or FALSE. Two ways to build a line, same stored result:
+  - **Tap Builder** (easy way): tap to add a Term (PRICE, OPEN,
+    PREV_CLOSE, TIME_NOW, VOLUME…), a Number, a clock Time, or
+    a % Change, joined by + − × ÷. Quick examples (Gap up 0.7%,
+    Price above open, Time 10:15 or later, Up 1% today) fill a
+    whole line in one tap, and the preview says in plain words
+    when the line will be TRUE.
+  - **Stock IDE** (type way): type the line as text, e.g.
+    `PCT_CHANGE(OPEN, PREV_CLOSE) >= 0.7`. As you type a word,
+    matching terms are suggested — tap one to insert it. Sign
+    buttons add >=, ×, ÷ and brackets without hunting the
+    keyboard. The line is checked as you type; any mistake is
+    explained in plain words.
   The two sides must be the same type (price with price, time
   with time…) or one side a plain number — the builder checks
   this while you build and refuses a mixed line.

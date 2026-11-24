@@ -101,6 +101,37 @@ String compareLabel(String op) {
   }
 }
 
+/// The compare sign in plain words — what must happen for the
+/// line's answer to be TRUE.
+String compareMeaning(String op) {
+  switch (op) {
+    case '>=':
+      return 'the left side is at least the right side';
+    case '>':
+      return 'the left side is more than the right side';
+    case '<=':
+      return 'the left side is at most the right side';
+    case '<':
+      return 'the left side is less than the right side';
+    case '=':
+      return 'the left side equals the right side';
+    case '!=':
+      return 'the left side is not equal to the right side';
+    case 'CROSSED_ABOVE':
+      return 'the left side was below the right side and now goes above it';
+    case 'CROSSED_BELOW':
+      return 'the left side was above the right side and now goes below it';
+    case 'TOUCHED':
+      return 'the left side touched the right level at any point today';
+    case 'BETWEEN':
+      return 'the left side is between the right side and the upper bound';
+    case 'OUTSIDE':
+      return 'the left side is outside the right side and the upper bound';
+    default:
+      return '';
+  }
+}
+
 String fmtClock(int minutes) {
   final h = minutes ~/ 60;
   final m = minutes % 60;
@@ -222,6 +253,18 @@ class MathsSide {
     return b.toString();
   }
 
+  /// The same side as typeable text for the Stock IDE editor
+  /// (plain * and / signs, term codes, HH:MM times) — the parser
+  /// reads this exact form back into the same stored side.
+  String get formula {
+    if (atoms.isEmpty) return '';
+    final b = StringBuffer(atoms.first.render());
+    for (var i = 0; i < ops.length && i + 1 < atoms.length; i++) {
+      b.write(' ${ops[i]} ${atoms[i + 1].render()}');
+    }
+    return b.toString();
+  }
+
   Map<String, dynamic> toJson() => {
         'atoms': atoms.map((a) => a.toJson()).toList(),
         'ops': ops,
@@ -284,6 +327,13 @@ class SignalLine {
   String render() {
     final base = '${left.render()} ${compareLabel(compare)} ${right.render()}';
     if (needsRight2) return '$base and ${right2?.render() ?? '…'}';
+    return base;
+  }
+
+  /// The whole line as typeable text for the Stock IDE editor.
+  String get formula {
+    final base = '${left.formula} $compare ${right.formula}';
+    if (needsRight2) return '$base AND ${right2?.formula ?? ''}';
     return base;
   }
 
