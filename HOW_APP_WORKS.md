@@ -102,6 +102,12 @@ _Last updated: 24 Nov 2026 — Stock IDE syntax colours, like a real code editor
     a typo is easy to spot. A colour legend sits under the
     writing box, and the same colours are used in the line
     previews everywhere in the builder.
+  - The signal's **variables are always shown as tappable
+    purple chips** under the writing box in the Stock IDE (and
+    in the variable editor, for the variables a new variable
+    may use) — tap one to insert its name, no typing needed.
+    They also appear in the as-you-type suggestions and on the
+    ℹ all-terms page.
   The two sides must be the same type (price with price, time
   with time…) or one side a plain number — the editor checks
   this while you type and refuses a mixed line.

@@ -1229,6 +1229,33 @@ class _LineEditorScreenState extends State<_LineEditorScreen> {
               _legendDot('unknown', 'Unknown word'),
             ],
           ),
+          if (widget.variables.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Text('Your variables — tap to add:',
+                style: TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final v in widget.variables)
+                  ActionChip(
+                    label: Text('${v.name} · ${v.dartType}',
+                        style: const TextStyle(fontSize: 12.5)),
+                    onPressed: () => _insertSuggestion(v.name),
+                    backgroundColor: Colors.white,
+                    side:
+                        BorderSide(color: signalKindColor('variable')),
+                    labelStyle:
+                        TextStyle(color: signalKindColor('variable')),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+          ],
           if (suggestions.isNotEmpty) ...[
             const SizedBox(height: 12),
             const Text('Suggested terms — tap to add:',
@@ -1853,6 +1880,33 @@ class _VariableEditorScreenState extends State<_VariableEditorScreen> {
             ),
             onChanged: (_) => setState(_refresh),
           ),
+          if (!_isText && widget.contextVars.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Text('Variables you can use — tap to add:',
+                style: TextStyle(
+                    color: _secondary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final v in widget.contextVars)
+                  ActionChip(
+                    label: Text('${v.name} · ${v.dartType}',
+                        style: const TextStyle(fontSize: 12.5)),
+                    onPressed: () => _insert(v.name, replaceWord: true),
+                    backgroundColor: Colors.white,
+                    side:
+                        BorderSide(color: signalKindColor('variable')),
+                    labelStyle:
+                        TextStyle(color: signalKindColor('variable')),
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+          ],
           if (!_isText) ...[
             if (suggestions.isNotEmpty) ...[
               const SizedBox(height: 10),
